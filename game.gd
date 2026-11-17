@@ -1,8 +1,8 @@
 extends Node3D
 
-const BOARD = 4.0
-const PIECE_Y = 0.16
+const PIECE_Y = 0.07
 const COUNT = 8
+const TABLE_BOTTOM_Y = -0.60
 var pieces: Array[RigidBody3D] = []
 var selected: RigidBody3D
 var aiming := false
@@ -25,6 +25,7 @@ var rng := RandomNumberGenerator.new()
 var orbiting := false
 var board_angle := 0.0
 var rotation_proxies: Dictionary = {}
+@onready var beaver = $Beaver
 
 func _ready() -> void:
  rng.randomize()
@@ -62,8 +63,10 @@ func _build_ui() -> void:
  score.position = Vector2(30, 58)
  status = _label(root, "", 25, Color("fff0d1"))
  status.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
- status.position = Vector2(-150, 25)
- status.size = Vector2(300, 40)
+ status.offset_left = -150
+ status.offset_right = 150
+ status.offset_top = 25
+ status.offset_bottom = 65
  status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
  hint = _label(root, "ЛКМ: тяни шашку для удара или нижний край для поворота", 16, Color("eed9b8"))
  hint.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
@@ -101,6 +104,9 @@ func _make_piece(side: int, pos: Vector3) -> void:
  var body := scene.instantiate() as RigidBody3D
  body.position = pos
  body.set_meta("side", side)
+ body.contact_monitor = true
+ body.max_contacts_reported = 8
+ body.body_entered.connect(_on_piece_body_entered.bind(body))
  add_child(body)
  pieces.append(body)
 
@@ -108,6 +114,8 @@ func _update_ui() -> void:
  score.text = "РАУНД %d     ТЫ %d : %d БОБЁР" % [round_no, wins, losses]
  if phase == "aim":
   status.text = "ТВОЙ ХОД" if turn == 0 else "БОБЁР ДУМАЕТ…"
+ elif phase == "windup":
+  status.text = "БОБЁР ЦЕЛИТСЯ…"
  elif phase == "moving":
   status.text = "ШАШКИ В ДЕЛЕ"
 
@@ -154,7 +162,7 @@ func _unhandled_input(event: InputEvent) -> void:
     orbiting = true
     rotation_proxies.clear()
     for piece in pieces:
-     if is_instance_valid(piece) and not piece.get_meta("fallen", false):
+     if is_instance_valid(piece):
       piece.linear_velocity = Vector3.ZERO
       piece.angular_velocity = Vector3.ZERO
       piece.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
@@ -187,8 +195,6 @@ func _unhandled_input(event: InputEvent) -> void:
   power_fill.size = Vector2(200 * strength / 2.8, 6)
 
 func _is_table_drag(ray_start: Vector3, ray_direction: Vector3) -> bool:
- # The round tabletop and its lower platform have no extra collider that can
- # interfere with falling pieces; test the pointer against their plane instead.
  var hit = Plane(Vector3.UP, -0.35).intersects_ray(ray_start, ray_direction)
  if hit == null:
   return false
@@ -229,33 +235,29 @@ func _physics_process(delta: float) -> void:
  if phase != "moving": return
  shot_time += delta
  var moving := false
+ var falling := false
  for p in pieces:
-  if not is_instance_valid(p) or p.get_meta("fallen", false): continue
-  if Vector2(p.position.x, p.position.z).length() > 2.40 or p.position.y < -0.35:
-   _drop_piece(p)
-  elif p.linear_velocity.length() > 0.1 or p.angular_velocity.length() > 0.5:
+  if not is_instance_valid(p) or p.is_queued_for_deletion(): continue
+  if p.position.y < TABLE_BOTTOM_Y:
+   falling = true
+  if not moving and not p.sleeping and (
+   p.linear_velocity.length_squared() > 0.01 or p.angular_velocity.length_squared() > 0.25
+  ):
    moving = true
  if moving: still_time = 0
  else: still_time += delta
- if (still_time > 0.7 and shot_time > 0.7) or shot_time > 9:
+ if not falling and ((still_time > 0.7 and shot_time > 0.7) or shot_time > 9):
   _finish_shot()
 
-func _drop_piece(piece: RigidBody3D) -> void:
- piece.set_meta("fallen", true)
- var tween := create_tween()
- tween.tween_interval(0.85)
- tween.set_parallel(true)
- for child in piece.get_children():
-  if child is MeshInstance3D:
-   tween.tween_property(child, "transparency", 1.0, 1.0)
- tween.set_parallel(false)
- tween.tween_callback(piece.queue_free)
+func _on_piece_body_entered(other: Node, piece: RigidBody3D) -> void:
+ if other == $FloorPhysics:
+  piece.queue_free()
 
 func _finish_shot() -> void:
  var remaining: Array[RigidBody3D] = []
  var counts := [0, 0]
  for p in pieces:
-  if is_instance_valid(p) and not p.is_queued_for_deletion() and not p.get_meta("fallen", false):
+  if is_instance_valid(p) and not p.is_queued_for_deletion():
    remaining.append(p)
    counts[int(p.get_meta("side"))] += 1
  pieces = remaining
@@ -287,10 +289,12 @@ func _bot_shoot() -> void:
  var mine: Array[RigidBody3D] = []
  var enemies: Array[RigidBody3D] = []
  for p in pieces:
-  if not is_instance_valid(p): continue
+  if not is_instance_valid(p) or p.is_queued_for_deletion(): continue
   if p.get_meta("side") == 1: mine.append(p)
   else: enemies.append(p)
- if mine.is_empty() or enemies.is_empty(): return
+ if mine.is_empty() or enemies.is_empty():
+  _finish_shot()
+  return
  var best: RigidBody3D = mine[0]
  var target: RigidBody3D = enemies[0]
  var best_distance := INF
@@ -303,5 +307,16 @@ func _bot_shoot() -> void:
     target = b
  var direction := target.position - best.position
  direction.y = 0
+ if direction.is_zero_approx(): direction = Vector3.BACK
  direction = direction.normalized().rotated(Vector3.UP, rng.randf_range(-0.08, 0.08))
- _shoot(best, direction, rng.randf_range(1.8, 2.5))
+ phase = "windup"
+ _update_ui()
+ await beaver.wind_up(best.global_position, direction)
+ if is_instance_valid(best) and not best.is_queued_for_deletion():
+  await beaver.strike(best.global_position, direction)
+  if is_instance_valid(best) and not best.is_queued_for_deletion():
+   _shoot(best, direction, rng.randf_range(1.8, 2.5))
+   beaver.recover(direction)
+   return
+ await beaver.recover()
+ _bot_shoot()
