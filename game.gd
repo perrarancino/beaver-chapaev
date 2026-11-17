@@ -150,7 +150,7 @@ func _unhandled_input(event: InputEvent) -> void:
     selected = hit.collider
     drag_start = event.position
     aiming = true
-   elif hit and hit.collider == $BoardPhysics and hit.position.z > 0.5:
+   elif _is_table_drag(ray_start, camera.project_ray_normal(event.position)):
     orbiting = true
     rotation_proxies.clear()
     for piece in pieces:
@@ -174,17 +174,41 @@ func _unhandled_input(event: InputEvent) -> void:
    power_fill.size = Vector2.ZERO
    if drag.length() > 12 and is_instance_valid(selected):
     var direction := _drag_direction(drag)
-    _shoot(selected, direction, clampf(drag.length() / 100.0, 0.4, 2.8))
+    _shoot(selected, direction, clampf(_pull_strength(drag), 0.4, 2.8))
    selected = null
  if event is InputEventMouseMotion and aiming and is_instance_valid(selected):
   var drag: Vector2 = event.position - drag_start
   var direction := _drag_direction(drag)
-  var strength := clampf(drag.length() / 100.0, 0.0, 2.8)
+  var strength := _pull_strength(drag)
   aim_line.visible = strength > 0.12
   aim_line.position = selected.position + direction * (0.3 + strength * 0.22) + Vector3(0, 0.15, 0)
   aim_line.rotation.y = atan2(direction.x, direction.z)
   aim_line.scale.z = strength * 0.44
   power_fill.size = Vector2(200 * strength / 2.8, 6)
+
+func _is_table_drag(ray_start: Vector3, ray_direction: Vector3) -> bool:
+ # The round tabletop and its lower platform have no extra collider that can
+ # interfere with falling pieces; test the pointer against their plane instead.
+ var hit = Plane(Vector3.UP, -0.35).intersects_ray(ray_start, ray_direction)
+ if hit == null:
+  return false
+ return hit.z > 0.5 and Vector2(hit.x, hit.z).length() <= 2.7
+
+func _pull_strength(drag: Vector2) -> float:
+ if drag.length() < 0.001:
+  return 0.0
+ var direction := drag.normalized()
+ var viewport_size := get_viewport().get_visible_rect().size
+ var available := INF
+ if direction.x > 0.0001:
+  available = minf(available, (viewport_size.x - drag_start.x) / direction.x)
+ elif direction.x < -0.0001:
+  available = minf(available, -drag_start.x / direction.x)
+ if direction.y > 0.0001:
+  available = minf(available, (viewport_size.y - drag_start.y) / direction.y)
+ elif direction.y < -0.0001:
+  available = minf(available, -drag_start.y / direction.y)
+ return clampf(drag.length() / maxf(available, 1.0) * 2.8, 0.0, 2.8)
 
 func _drag_direction(drag: Vector2) -> Vector3:
  var right := camera.global_transform.basis.x
