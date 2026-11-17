@@ -24,6 +24,8 @@ jobs:
           mkdir -p ~/.local/share/godot/export_templates/4.7.stable
           unzip -q /tmp/templates.zip -d /tmp/godot-templates
           cp -r /tmp/godot-templates/templates/. ~/.local/share/godot/export_templates/4.7.stable/
+      - name: Check scene startup
+        run: /tmp/godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --quit-after 10
       - name: Export web game
         run: |
           mkdir -p build/web

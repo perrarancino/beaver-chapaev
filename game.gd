@@ -24,6 +24,8 @@ var aim_line: MeshInstance3D
 var rng := RandomNumberGenerator.new()
 var orbiting := false
 var board_angle := 0.0
+var rotation_start_angle := 0.0
+var rotation_start_transforms: Dictionary = {}
 
 func _ready() -> void:
  rng.randomize()
@@ -123,17 +125,18 @@ func _unhandled_input(event: InputEvent) -> void:
   orbiting = false
   for piece in pieces:
    if is_instance_valid(piece) and not piece.get_meta("fallen", false):
+    piece.linear_velocity = Vector3.ZERO
+    piece.angular_velocity = Vector3.ZERO
     piece.freeze = false
-    piece.sleeping = false
+    piece.sleeping = true
   return
  if event is InputEventMouseMotion and orbiting:
-  var rotation_delta: float = event.relative.x * 0.006
-  board_angle += rotation_delta
+  board_angle += event.relative.x * 0.006
   $BoardPivot.rotation.y = board_angle
+  var rotation := Transform3D(Basis(Vector3.UP, board_angle - rotation_start_angle), Vector3.ZERO)
   for piece in pieces:
-   if is_instance_valid(piece) and not piece.get_meta("fallen", false):
-    piece.position = piece.position.rotated(Vector3.UP, rotation_delta)
-    piece.rotate_y(rotation_delta)
+   if is_instance_valid(piece) and rotation_start_transforms.has(piece):
+    piece.global_transform = rotation * rotation_start_transforms[piece]
   return
  if phase != "aim" or turn != 0: return
  if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -146,11 +149,17 @@ func _unhandled_input(event: InputEvent) -> void:
     selected = hit.collider
     drag_start = event.position
     aiming = true
-   elif hit and hit.collider == $BoardPivot/BoardPhysics and hit.position.z > 0.5:
+   elif hit and hit.collider == $BoardPhysics and hit.position.z > 0.5:
     orbiting = true
+    rotation_start_angle = board_angle
+    rotation_start_transforms.clear()
     for piece in pieces:
      if is_instance_valid(piece) and not piece.get_meta("fallen", false):
+      piece.linear_velocity = Vector3.ZERO
+      piece.angular_velocity = Vector3.ZERO
+      piece.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
       piece.freeze = true
+      rotation_start_transforms[piece] = piece.global_transform
   elif aiming:
    var drag: Vector2 = event.position - drag_start
    aiming = false

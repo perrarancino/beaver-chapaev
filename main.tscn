@@ -122,10 +122,10 @@ omni_range = 9.0
 
 [node name="BoardPivot" type="Node3D" parent="."]
 
-[node name="BoardPhysics" type="StaticBody3D" parent="BoardPivot"]
+[node name="BoardPhysics" type="StaticBody3D" parent="."]
 position = Vector3(0, -0.16, 0)
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="BoardPivot/BoardPhysics"]
+[node name="CollisionShape3D" type="CollisionShape3D" parent="BoardPhysics"]
 shape = SubResource("board_shape")
 
 [node name="FloorPhysics" type="StaticBody3D" parent="."]
@@ -139,27 +139,32 @@ position = Vector3(0, -2.2, 0)
 scale = Vector3(12, 0.2, 14)
 mesh = SubResource("cube")
 material_override = SubResource("floor")
+cast_shadow = 0
 
 [node name="BackWall" type="MeshInstance3D" parent="."]
 position = Vector3(0, 0, -6)
 scale = Vector3(12, 5, 0.2)
 mesh = SubResource("cube")
 material_override = SubResource("wall")
+cast_shadow = 0
 
 [node name="Table" type="MeshInstance3D" parent="BoardPivot"]
 position = Vector3(0, -0.46, 0)
 mesh = SubResource("round_table")
 material_override = SubResource("frame")
+cast_shadow = 0
 
 [node name="BoardBase" type="MeshInstance3D" parent="BoardPivot"]
 position = Vector3(0, -0.16, 0)
 mesh = SubResource("round_board")
 material_override = SubResource("wood")
+cast_shadow = 0
 
 [node name="BoardSurface" type="MeshInstance3D" parent="BoardPivot"]
 position = Vector3(0, -0.004, 0)
 mesh = SubResource("round_surface")
 material_override = SubResource("pale")
+cast_shadow = 0
 
 [node name="Grid" type="Node3D" parent="BoardPivot"]
 
