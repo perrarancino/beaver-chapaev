@@ -91,8 +91,9 @@ light_energy = 4.8
 shadow_enabled = true
 shadow_blur = 1.8
 light_size = 0.2
-shadow_bias = 0.03
-shadow_normal_bias = 1.5
+shadow_bias = 0.09
+shadow_opacity = 0.82
+shadow_reverse_cull_face = true
 spot_range = 9.0
 spot_angle = 32.0
 

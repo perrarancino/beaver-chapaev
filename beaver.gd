@@ -291,6 +291,7 @@ func _solid(color: Color, roughness: float) -> StandardMaterial3D:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = color
 	material.roughness = roughness
+	material.disable_receive_shadows = RenderingServer.get_current_rendering_method() == "gl_compatibility"
 	return material
 
 

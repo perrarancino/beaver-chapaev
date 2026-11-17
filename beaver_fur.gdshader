@@ -1,5 +1,10 @@
 shader_type spatial;
 
+#if CURRENT_RENDERER == RENDERER_COMPATIBILITY
+// Avoid stair-stepped self-shadowing across the overlapping fur meshes.
+render_mode shadows_disabled;
+#endif
+
 uniform vec4 base : source_color = vec4(0.42, 0.24, 0.14, 1.0);
 uniform bool tail_scales = false;
 varying vec3 model_point;
