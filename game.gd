@@ -6,6 +6,9 @@ const COUNT := 8
 const BOARD_RADIUS := 2.35
 const FLOOR_Y := -2.1
 const SHOT_IMPULSE := 3.0
+const DRAG_DEAD_ZONE := 12.0
+const MAX_PULL_STRENGTH := 2.8
+const AIM_LIFT := 0.09
 var pieces: Array[Checker] = []
 var selected: Checker
 var aiming := false
@@ -23,19 +26,20 @@ var score: Label
 var hint: Label
 var power_back: ColorRect
 var power_fill: ColorRect
-var aim_line: MeshInstance3D
 var rng := RandomNumberGenerator.new()
 var orbiting := false
 var board_angle := 0.0
 var rotation_proxies: Dictionary[Checker, Node3D] = {}
 @onready var beaver = $Beaver
+@onready var aim_arrow: MeshInstance3D = $AimArrow
+@onready var aim_material := aim_arrow.material_override as ShaderMaterial
 
 func _ready() -> void:
  rng.randomize()
  camera = $Camera3D
- aim_line = $AimLine
  $PreviewPieces.queue_free()
  _build_ui()
+ get_window().focus_exited.connect(_cancel_aim)
  _new_round()
 
 func _material(color: Color, roughness := 0.8, metallic := 0.0) -> StandardMaterial3D:
@@ -47,6 +51,7 @@ func _material(color: Color, roughness := 0.8, metallic := 0.0) -> StandardMater
 
 func _label(parent: Control, text_value: String, size: int, color: Color) -> Label:
  var l := Label.new()
+ l.mouse_filter = Control.MOUSE_FILTER_IGNORE
  l.text = text_value
  l.add_theme_font_size_override("font_size", size)
  l.add_theme_color_override("font_color", color)
@@ -77,12 +82,14 @@ func _build_ui() -> void:
  hint.size = Vector2(560, 30)
  hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
  power_back = ColorRect.new()
+ power_back.mouse_filter = Control.MOUSE_FILTER_IGNORE
  power_back.color = Color("382d27")
  power_back.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
  power_back.position = Vector2(-100, -28)
  power_back.size = Vector2(200, 6)
  root.add_child(power_back)
  power_fill = ColorRect.new()
+ power_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
  power_fill.color = Color("e9a95f")
  power_fill.size = Vector2.ZERO
  power_back.add_child(power_fill)
@@ -91,9 +98,7 @@ func _new_round() -> void:
  for p in pieces:
   if is_instance_valid(p): p.queue_free()
  pieces.clear()
- selected = null
- aiming = false
- aim_line.visible = false
+ _cancel_aim()
  for side in range(2):
   for i in range(COUNT):
    var start := Vector3(-1.4 + i * 0.4, Checker.REST_Y, 1.65 if side == 0 else -1.65)
@@ -121,6 +126,7 @@ func _update_ui() -> void:
 
 func _input(event: InputEvent) -> void:
  if event is InputEventKey and event.keycode == KEY_ESCAPE and event.pressed and not event.echo:
+  _cancel_aim()
   if DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_WINDOWED:
    DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
   else:
@@ -150,23 +156,33 @@ func _unhandled_input(event: InputEvent) -> void:
    elif _is_table_drag(ray_start, camera.project_ray_normal(event.position)):
     _begin_board_rotation()
   elif aiming:
-   var drag: Vector2 = event.position - drag_start
-   aiming = false
-   aim_line.visible = false
-   power_fill.size = Vector2.ZERO
-   if drag.length() > 12 and is_instance_valid(selected):
-    var direction := _drag_direction(drag)
-    _shoot(selected, direction, clampf(_pull_strength(drag), 0.4, 2.8))
-   selected = null
- if event is InputEventMouseMotion and aiming and is_instance_valid(selected):
-  var drag: Vector2 = event.position - drag_start
-  var direction := _drag_direction(drag)
-  var strength := _pull_strength(drag)
-  aim_line.visible = strength > 0.12
-  aim_line.position = selected.position + direction * (0.3 + strength * 0.22) + Vector3(0, 0.15, 0)
-  aim_line.rotation.y = atan2(direction.x, direction.z)
-  aim_line.scale.z = strength * 0.44
-  power_fill.size = Vector2(200 * strength / 2.8, 6)
+   var piece := selected
+   var shot := _aim_vector(event.position)
+   _cancel_aim()
+   if not shot.is_zero_approx():
+    _shoot(piece, shot.normalized(), shot.length())
+ if event is InputEventMouseMotion and aiming:
+  _draw_aim(_aim_vector(event.position))
+
+func _cancel_aim() -> void:
+ selected = null
+ aiming = false
+ aim_arrow.hide()
+ power_fill.size = Vector2.ZERO
+
+func _draw_aim(shot: Vector3) -> void:
+ aim_arrow.visible = not shot.is_zero_approx()
+ if not aim_arrow.visible:
+  power_fill.size = Vector2.ZERO
+  return
+ var direction := shot.normalized()
+ var power := shot.length() / MAX_PULL_STRENGTH
+ var length := lerpf(0.46, 1.72, power)
+ aim_arrow.position = selected.position + Vector3.UP * AIM_LIFT +  + direction * (Checker.RADIUS + 0.025 + length * 0.5)
+ aim_arrow.rotation.y = atan2(direction.x, direction.z)
+ aim_arrow.scale.z = length
+ aim_material.set_shader_parameter("arrow_length", length)
+ power_fill.size = Vector2(200 * power, 6)
 
 func _begin_board_rotation() -> void:
  orbiting = true
@@ -211,14 +227,21 @@ func _pull_strength(drag: Vector2) -> float:
   available = minf(available, (viewport_size.y - drag_start.y) / direction.y)
  elif direction.y < -0.0001:
   available = minf(available, -drag_start.y / direction.y)
- return clampf(drag.length() / maxf(available, 1.0) * 2.8, 0.0, 2.8)
+ return clampf(drag.length() / maxf(available, 1.0) * MAX_PULL_STRENGTH, 0.4, MAX_PULL_STRENGTH)
 
-func _drag_direction(drag: Vector2) -> Vector3:
- var right := camera.global_transform.basis.x
- var back := camera.global_transform.basis.z
- right.y = 0
- back.y = 0
- return (-right.normalized() * drag.x - back.normalized() * drag.y).normalized()
+func _aim_vector(cursor: Vector2) -> Vector3:
+ var drag := cursor - drag_start
+ if not is_instance_valid(selected) or drag.length_squared() <= DRAG_DEAD_ZONE * DRAG_DEAD_ZONE:
+  return Vector3.ZERO
+ var origin := selected.global_position + Vector3.UP * AIM_LIFT
+ # Use a nearby point on the screen ray so long pulls never shoot above the plane's horizon.
+ var sample := camera.unproject_position(origin) - drag.normalized() * 12.0
+ var plane := Plane(Vector3.UP, origin.y)
+ var hit: Variant = plane.intersects_ray(
+  camera.project_ray_origin(sample), camera.project_ray_normal(sample))
+ if hit == null:
+  return Vector3.ZERO
+ return origin.direction_to(hit) * _pull_strength(drag)
 
 func _shoot(piece: Checker, direction: Vector3, strength: float) -> void:
  phase = "moving"
