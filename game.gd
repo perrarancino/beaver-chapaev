@@ -24,8 +24,7 @@ var aim_line: MeshInstance3D
 var rng := RandomNumberGenerator.new()
 var orbiting := false
 var board_angle := 0.0
-var rotation_start_angle := 0.0
-var rotation_start_transforms: Dictionary = {}
+var rotation_proxies: Dictionary = {}
 
 func _ready() -> void:
  rng.randomize()
@@ -123,20 +122,22 @@ func _input(event: InputEvent) -> void:
 func _unhandled_input(event: InputEvent) -> void:
  if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed and orbiting:
   orbiting = false
-  for piece in pieces:
-   if is_instance_valid(piece) and not piece.get_meta("fallen", false):
+  for piece in rotation_proxies:
+   var proxy: Node3D = rotation_proxies[piece]
+   if is_instance_valid(piece) and is_instance_valid(proxy):
+    piece.global_transform = proxy.global_transform
+    piece.reset_physics_interpolation()
     piece.linear_velocity = Vector3.ZERO
     piece.angular_velocity = Vector3.ZERO
+    piece.visible = true
     piece.freeze = false
     piece.sleeping = true
+    proxy.queue_free()
+  rotation_proxies.clear()
   return
  if event is InputEventMouseMotion and orbiting:
   board_angle += event.relative.x * 0.006
   $BoardPivot.rotation.y = board_angle
-  var rotation := Transform3D(Basis(Vector3.UP, board_angle - rotation_start_angle), Vector3.ZERO)
-  for piece in pieces:
-   if is_instance_valid(piece) and rotation_start_transforms.has(piece):
-    piece.global_transform = rotation * rotation_start_transforms[piece]
   return
  if phase != "aim" or turn != 0: return
  if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
@@ -151,15 +152,21 @@ func _unhandled_input(event: InputEvent) -> void:
     aiming = true
    elif hit and hit.collider == $BoardPhysics and hit.position.z > 0.5:
     orbiting = true
-    rotation_start_angle = board_angle
-    rotation_start_transforms.clear()
+    rotation_proxies.clear()
     for piece in pieces:
      if is_instance_valid(piece) and not piece.get_meta("fallen", false):
       piece.linear_velocity = Vector3.ZERO
       piece.angular_velocity = Vector3.ZERO
-      piece.freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
+      piece.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
       piece.freeze = true
-      rotation_start_transforms[piece] = piece.global_transform
+      var proxy := Node3D.new()
+      $BoardPivot.add_child(proxy)
+      proxy.global_transform = piece.global_transform
+      for child in piece.get_children():
+       if child is MeshInstance3D:
+        proxy.add_child(child.duplicate())
+      piece.visible = false
+      rotation_proxies[piece] = proxy
   elif aiming:
    var drag: Vector2 = event.position - drag_start
    aiming = false
