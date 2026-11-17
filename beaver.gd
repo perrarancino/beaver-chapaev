@@ -2,7 +2,6 @@
 extends Node3D
 
 const FUR_SHADER = preload("res://beaver_fur.gdshader")
-const CHECKER_RADIUS := 0.155
 const INDEX_REACH := 0.29
 
 var _sphere := SphereMesh.new()
@@ -271,7 +270,7 @@ func _strike_facing(direction: Vector3) -> Vector3:
 
 
 func _contact(checker: Vector3, direction: Vector3, facing: Vector3) -> Vector3:
-	var tip := to_local(checker + Vector3.UP * 0.012 - direction * CHECKER_RADIUS)
+	var tip := to_local(checker + Vector3.UP * 0.012 - direction * Checker.RADIUS)
 	return tip - Basis.looking_at(facing, Vector3.UP, true) * Vector3(0, 0.026, INDEX_REACH)
 
 

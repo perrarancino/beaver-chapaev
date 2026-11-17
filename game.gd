@@ -1,10 +1,13 @@
 extends Node3D
 
-const PIECE_Y = 0.07
-const COUNT = 8
-const TABLE_BOTTOM_Y = -0.60
-var pieces: Array[RigidBody3D] = []
-var selected: RigidBody3D
+const LIGHT_PIECE := preload("res://piece_light.tscn")
+const DARK_PIECE := preload("res://piece_dark.tscn")
+const COUNT := 8
+const BOARD_RADIUS := 2.35
+const FLOOR_Y := -2.1
+const SHOT_IMPULSE := 3.0
+var pieces: Array[Checker] = []
+var selected: Checker
 var aiming := false
 var drag_start := Vector2.ZERO
 var turn := 0 # 0 player, 1 beaver
@@ -24,7 +27,7 @@ var aim_line: MeshInstance3D
 var rng := RandomNumberGenerator.new()
 var orbiting := false
 var board_angle := 0.0
-var rotation_proxies: Dictionary = {}
+var rotation_proxies: Dictionary[Checker, Node3D] = {}
 @onready var beaver = $Beaver
 
 func _ready() -> void:
@@ -93,20 +96,17 @@ func _new_round() -> void:
  aim_line.visible = false
  for side in range(2):
   for i in range(COUNT):
-   var start := Vector3(-1.4 + i * 0.4, PIECE_Y, 1.65 if side == 0 else -1.65)
+   var start := Vector3(-1.4 + i * 0.4, Checker.REST_Y, 1.65 if side == 0 else -1.65)
    _make_piece(side, start.rotated(Vector3.UP, board_angle))
  turn = 0
  phase = "aim"
  _update_ui()
 
 func _make_piece(side: int, pos: Vector3) -> void:
- var scene: PackedScene = load("res://piece_light.tscn" if side == 0 else "res://piece_dark.tscn")
- var body := scene.instantiate() as RigidBody3D
+ var scene := LIGHT_PIECE if side == 0 else DARK_PIECE
+ var body := scene.instantiate() as Checker
  body.position = pos
- body.set_meta("side", side)
- body.contact_monitor = true
- body.max_contacts_reported = 8
- body.body_entered.connect(_on_piece_body_entered.bind(body))
+ body.side = side
  add_child(body)
  pieces.append(body)
 
@@ -129,19 +129,7 @@ func _input(event: InputEvent) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
  if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed and orbiting:
-  orbiting = false
-  for piece in rotation_proxies:
-   var proxy: Node3D = rotation_proxies[piece]
-   if is_instance_valid(piece) and is_instance_valid(proxy):
-    piece.global_transform = proxy.global_transform
-    piece.reset_physics_interpolation()
-    piece.linear_velocity = Vector3.ZERO
-    piece.angular_velocity = Vector3.ZERO
-    piece.visible = true
-    piece.freeze = false
-    piece.sleeping = true
-    proxy.queue_free()
-  rotation_proxies.clear()
+  _finish_board_rotation()
   return
  if event is InputEventMouseMotion and orbiting:
   board_angle += event.relative.x * 0.006
@@ -154,27 +142,13 @@ func _unhandled_input(event: InputEvent) -> void:
    var ray_end := ray_start + camera.project_ray_normal(event.position) * 100
    var query := PhysicsRayQueryParameters3D.create(ray_start, ray_end)
    var hit := get_world_3d().direct_space_state.intersect_ray(query)
-   if hit and hit.collider is RigidBody3D and hit.collider.get_meta("side", -1) == 0:
-    selected = hit.collider
+   var picked := hit.get("collider") as Checker
+   if picked and picked.side == 0:
+    selected = picked
     drag_start = event.position
     aiming = true
    elif _is_table_drag(ray_start, camera.project_ray_normal(event.position)):
-    orbiting = true
-    rotation_proxies.clear()
-    for piece in pieces:
-     if is_instance_valid(piece):
-      piece.linear_velocity = Vector3.ZERO
-      piece.angular_velocity = Vector3.ZERO
-      piece.freeze_mode = RigidBody3D.FREEZE_MODE_STATIC
-      piece.freeze = true
-      var proxy := Node3D.new()
-      $BoardPivot.add_child(proxy)
-      proxy.global_transform = piece.global_transform
-      for child in piece.get_children():
-       if child is MeshInstance3D:
-        proxy.add_child(child.duplicate())
-      piece.visible = false
-      rotation_proxies[piece] = proxy
+    _begin_board_rotation()
   elif aiming:
    var drag: Vector2 = event.position - drag_start
    aiming = false
@@ -193,6 +167,29 @@ func _unhandled_input(event: InputEvent) -> void:
   aim_line.rotation.y = atan2(direction.x, direction.z)
   aim_line.scale.z = strength * 0.44
   power_fill.size = Vector2(200 * strength / 2.8, 6)
+
+func _begin_board_rotation() -> void:
+ orbiting = true
+ for piece in pieces:
+  piece.freeze = true
+  var proxy := Node3D.new()
+  $BoardPivot.add_child(proxy)
+  proxy.global_transform = piece.global_transform
+  proxy.add_child(piece.get_node("CarvedWood").duplicate())
+  piece.visible = false
+  rotation_proxies[piece] = proxy
+
+func _finish_board_rotation() -> void:
+ orbiting = false
+ for piece in rotation_proxies:
+  var proxy := rotation_proxies[piece]
+  piece.global_transform = proxy.global_transform
+  piece.reset_physics_interpolation()
+  piece.visible = true
+  piece.freeze = false
+  piece.sleeping = true
+  proxy.queue_free()
+ rotation_proxies.clear()
 
 func _is_table_drag(ray_start: Vector3, ray_direction: Vector3) -> bool:
  var hit = Plane(Vector3.UP, -0.35).intersects_ray(ray_start, ray_direction)
@@ -223,12 +220,12 @@ func _drag_direction(drag: Vector2) -> Vector3:
  back.y = 0
  return (-right.normalized() * drag.x - back.normalized() * drag.y).normalized()
 
-func _shoot(piece: RigidBody3D, direction: Vector3, strength: float) -> void:
+func _shoot(piece: Checker, direction: Vector3, strength: float) -> void:
  phase = "moving"
  still_time = 0
  shot_time = 0
  piece.sleeping = false
- piece.apply_central_impulse(direction * strength * 4.2)
+ piece.apply_central_impulse(direction * strength * SHOT_IMPULSE)
  _update_ui()
 
 func _physics_process(delta: float) -> void:
@@ -236,31 +233,30 @@ func _physics_process(delta: float) -> void:
  shot_time += delta
  var moving := false
  var falling := false
- for p in pieces:
-  if not is_instance_valid(p) or p.is_queued_for_deletion(): continue
-  if p.position.y < TABLE_BOTTOM_Y:
+ for i in range(pieces.size() - 1, -1, -1):
+  var p := pieces[i]
+  if not p.falling and Vector2(p.position.x, p.position.z).length_squared() > BOARD_RADIUS * BOARD_RADIUS:
+   p.leave_board()
+  if p.falling:
+   if p.position.y <= FLOOR_Y:
+    pieces.remove_at(i)
+    p.queue_free()
+    continue
    falling = true
-  if not moving and not p.sleeping and (
-   p.linear_velocity.length_squared() > 0.01 or p.angular_velocity.length_squared() > 0.25
-  ):
+  elif not p.sleeping and p.linear_velocity.length_squared() > 0.0064:
    moving = true
  if moving: still_time = 0
  else: still_time += delta
- if not falling and ((still_time > 0.7 and shot_time > 0.7) or shot_time > 9):
+ if not falling and (still_time >= 0.35 or shot_time >= 9.0):
   _finish_shot()
 
-func _on_piece_body_entered(other: Node, piece: RigidBody3D) -> void:
- if other == $FloorPhysics:
-  piece.queue_free()
-
 func _finish_shot() -> void:
- var remaining: Array[RigidBody3D] = []
  var counts := [0, 0]
  for p in pieces:
-  if is_instance_valid(p) and not p.is_queued_for_deletion():
-   remaining.append(p)
-   counts[int(p.get_meta("side"))] += 1
- pieces = remaining
+  p.linear_velocity = Vector3.ZERO
+  p.angular_velocity = Vector3.ZERO
+  p.sleeping = true
+  counts[p.side] += 1
  if counts[0] == 0 or counts[1] == 0:
   phase = "round_end"
   if counts[0] == 0 and counts[1] == 0:
@@ -286,17 +282,17 @@ func _finish_shot() -> void:
   if phase == "aim" and turn == 1: _bot_shoot()
 
 func _bot_shoot() -> void:
- var mine: Array[RigidBody3D] = []
- var enemies: Array[RigidBody3D] = []
+ var mine: Array[Checker] = []
+ var enemies: Array[Checker] = []
  for p in pieces:
   if not is_instance_valid(p) or p.is_queued_for_deletion(): continue
-  if p.get_meta("side") == 1: mine.append(p)
+  if p.side == 1: mine.append(p)
   else: enemies.append(p)
  if mine.is_empty() or enemies.is_empty():
   _finish_shot()
   return
- var best: RigidBody3D = mine[0]
- var target: RigidBody3D = enemies[0]
+ var best: Checker = mine[0]
+ var target: Checker = enemies[0]
  var best_distance := INF
  for a in mine:
   for b in enemies:

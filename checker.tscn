@@ -1,0 +1,30 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://checker.gd" id="script"]
+[ext_resource type="ArrayMesh" path="res://checker.obj" id="checker_mesh"]
+
+[sub_resource type="CylinderShape3D" id="shape"]
+radius = 0.155
+height = 0.135
+
+[sub_resource type="PhysicsMaterial" id="wood_contact"]
+friction = 0.12
+bounce = 0.18
+
+[node name="Checker" type="RigidBody3D"]
+axis_lock_linear_y = true
+axis_lock_angular_x = true
+axis_lock_angular_z = true
+physics_material_override = SubResource("wood_contact")
+gravity_scale = 0.0
+linear_damp_mode = 1
+linear_damp = 0.40
+angular_damp = 3.0
+sleeping = true
+script = ExtResource("script")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("shape")
+
+[node name="CarvedWood" type="MeshInstance3D" parent="."]
+mesh = ExtResource("checker_mesh")

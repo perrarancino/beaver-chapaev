@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=3]
+[gd_scene load_steps=19 format=3]
 
 [ext_resource type="Script" path="res://game.gd" id="game"]
 [ext_resource type="PackedScene" path="res://piece_light.tscn" id="light_piece"]
@@ -46,10 +46,6 @@ ambient_light_color = Color(0.34, 0.32, 0.31, 1)
 ambient_light_energy = 0.28
 tonemap_mode = 2
 
-[sub_resource type="CylinderShape3D" id="table_shape"]
-radius = 2.35
-height = 0.602
-
 [sub_resource type="CylinderMesh" id="round_board"]
 top_radius = 2.35
 bottom_radius = 2.35
@@ -67,8 +63,6 @@ top_radius = 2.35
 bottom_radius = 2.35
 height = 0.29
 radial_segments = 96
-
-[sub_resource type="WorldBoundaryShape3D" id="floor_shape"]
 
 [sub_resource type="BoxMesh" id="cube"]
 
@@ -117,18 +111,6 @@ light_energy = 1.80
 omni_range = 7.0
 
 [node name="BoardPivot" type="Node3D" parent="."]
-
-[node name="TablePhysics" type="StaticBody3D" parent="."]
-position = Vector3(0, -0.299, 0)
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="TablePhysics"]
-shape = SubResource("table_shape")
-
-[node name="FloorPhysics" type="StaticBody3D" parent="."]
-position = Vector3(0, -2.1, 0)
-
-[node name="CollisionShape3D" type="CollisionShape3D" parent="FloorPhysics"]
-shape = SubResource("floor_shape")
 
 [node name="Floor" type="MeshInstance3D" parent="."]
 position = Vector3(0, -2.2, 0)
