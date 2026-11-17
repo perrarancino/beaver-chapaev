@@ -96,16 +96,17 @@ fov = 43.0
 current = true
 
 [node name="KeyLight" type="SpotLight3D" parent="."]
-position = Vector3(-2.4, 5.5, 2.0)
-rotation_degrees = Vector3(-64, -25, 0)
+position = Vector3(0, 5.8, 0)
+rotation_degrees = Vector3(-90, 0, 0)
 light_color = Color(1, 0.76, 0.51, 1)
 light_energy = 4.8
 shadow_enabled = true
 shadow_blur = 1.8
 light_size = 0.2
-shadow_bias = 0.02
-spot_range = 10.0
-spot_angle = 45.0
+shadow_bias = 0.03
+shadow_normal_bias = 1.5
+spot_range = 9.0
+spot_angle = 32.0
 
 [node name="WarmFill" type="OmniLight3D" parent="."]
 position = Vector3(3, 3.2, 1.2)
