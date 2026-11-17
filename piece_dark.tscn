@@ -1,0 +1,64 @@
+[gd_scene load_steps=9 format=3]
+
+[sub_resource type="StandardMaterial3D" id="wood"]
+albedo_color = Color(0.19, 0.08, 0.042, 1)
+roughness = 0.48
+
+[sub_resource type="StandardMaterial3D" id="rim"]
+albedo_color = Color(0.30, 0.14, 0.07, 1)
+roughness = 0.42
+
+[sub_resource type="StandardMaterial3D" id="detail"]
+albedo_color = Color(0.11, 0.045, 0.022, 1)
+roughness = 0.55
+
+[sub_resource type="CylinderMesh" id="body"]
+top_radius = 0.15375
+bottom_radius = 0.14625
+height = 0.0975
+radial_segments = 48
+
+[sub_resource type="CylinderMesh" id="bevel"]
+top_radius = 0.135
+bottom_radius = 0.15375
+height = 0.02625
+radial_segments = 48
+
+[sub_resource type="TorusMesh" id="ring"]
+inner_radius = 0.0915
+outer_radius = 0.096
+rings = 32
+ring_segments = 8
+
+[sub_resource type="CylinderShape3D" id="shape"]
+radius = 0.15375
+height = 0.135
+
+[sub_resource type="PhysicsMaterial" id="physics"]
+friction = 0.45
+bounce = 0.25
+
+[node name="Checker" type="RigidBody3D"]
+mass = 1.0
+physics_material_override = SubResource("physics")
+linear_damp = 0.6
+angular_damp = 2.0
+continuous_cd = true
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+shape = SubResource("shape")
+
+[node name="Body" type="MeshInstance3D" parent="."]
+mesh = SubResource("body")
+material_override = SubResource("wood")
+
+[node name="Bevel" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.06075, 0)
+mesh = SubResource("bevel")
+material_override = SubResource("rim")
+
+[node name="EngravedRing" type="MeshInstance3D" parent="."]
+position = Vector3(0, 0.07425, 0)
+mesh = SubResource("ring")
+material_override = SubResource("detail")
+
