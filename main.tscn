@@ -1,9 +1,10 @@
-[gd_scene load_steps=20 format=3]
+[gd_scene load_steps=21 format=3]
 
 [ext_resource type="Script" path="res://game.gd" id="game"]
 [ext_resource type="PackedScene" path="res://piece_light.tscn" id="light_piece"]
 [ext_resource type="PackedScene" path="res://piece_dark.tscn" id="dark_piece"]
 [ext_resource type="Script" path="res://beaver.gd" id="beaver"]
+[ext_resource type="Shader" path="res://room_surface.gdshader" id="room_surface"]
 
 [sub_resource type="StandardMaterial3D" id="wood"]
 albedo_color = Color(0.20, 0.095, 0.045, 1)
@@ -21,13 +22,13 @@ roughness = 0.7
 albedo_color = Color(0.24, 0.13, 0.075, 1)
 roughness = 0.7
 
-[sub_resource type="StandardMaterial3D" id="floor"]
-albedo_color = Color(0.035, 0.037, 0.04, 1)
-roughness = 0.7
+[sub_resource type="ShaderMaterial" id="floor"]
+shader = ExtResource("room_surface")
+shader_parameter/base_color = Color(0.035, 0.037, 0.04, 1)
 
-[sub_resource type="StandardMaterial3D" id="wall"]
-albedo_color = Color(0.065, 0.07, 0.07, 1)
-roughness = 0.7
+[sub_resource type="ShaderMaterial" id="wall"]
+shader = ExtResource("room_surface")
+shader_parameter/base_color = Color(0.065, 0.07, 0.07, 1)
 
 [sub_resource type="StandardMaterial3D" id="black"]
 albedo_color = Color(0.025, 0.018, 0.016, 1)
