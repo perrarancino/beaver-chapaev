@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=3]
+[gd_scene load_steps=23 format=3]
 
 [ext_resource type="Script" path="res://game.gd" id="game"]
 [ext_resource type="PackedScene" path="res://piece_light.tscn" id="light_piece"]
@@ -6,6 +6,8 @@
 [ext_resource type="Script" path="res://beaver.gd" id="beaver"]
 [ext_resource type="Shader" path="res://room_surface.gdshader" id="room_surface"]
 [ext_resource type="Shader" path="res://aim_arrow.gdshader" id="aim_arrow"]
+[ext_resource type="PackedScene" path="res://assets/beaver/beaver.glb" id="beaver_model"]
+[ext_resource type="Script" path="res://beaver_voice.gd" id="beaver_voice"]
 
 [sub_resource type="StandardMaterial3D" id="wood"]
 albedo_color = Color(0.20, 0.095, 0.045, 1)
@@ -351,6 +353,14 @@ cast_shadow = 0
 [node name="Beaver" type="Node3D" parent="."]
 position = Vector3(0, 0, -3.34)
 script = ExtResource("beaver")
+
+[node name="Model" parent="Beaver" instance=ExtResource("beaver_model")]
+position = Vector3(0, -0.138, 0)
+scale = Vector3(2.2, 2.2, 2.2)
+
+[node name="Voice" type="AudioStreamPlayer" parent="Beaver"]
+volume_db = -4.0
+script = ExtResource("beaver_voice")
 
 [node name="AimArrow" type="MeshInstance3D" parent="."]
 visible = false

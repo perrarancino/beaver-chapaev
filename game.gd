@@ -24,6 +24,7 @@ var camera: Camera3D
 var status: Label
 var score: Label
 var hint: Label
+var beaver_subtitle: Label
 var power_back: ColorRect
 var power_fill: ColorRect
 var rng := RandomNumberGenerator.new()
@@ -31,6 +32,7 @@ var orbiting := false
 var board_angle := 0.0
 var rotation_proxies: Dictionary[Checker, Node3D] = {}
 @onready var beaver = $Beaver
+@onready var beaver_voice = $Beaver/Voice
 @onready var aim_arrow: MeshInstance3D = $AimArrow
 @onready var aim_material := aim_arrow.material_override as ShaderMaterial
 
@@ -39,6 +41,7 @@ func _ready() -> void:
  camera = $Camera3D
  $PreviewPieces.queue_free()
  _build_ui()
+ beaver_voice.subtitle_changed.connect(_set_beaver_subtitle)
  get_window().focus_exited.connect(_cancel_aim)
  _new_round()
 
@@ -76,6 +79,15 @@ func _build_ui() -> void:
  status.offset_top = 25
  status.offset_bottom = 65
  status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+ beaver_subtitle = _label(root, "", 19, Color("f3ddbb"))
+ beaver_subtitle.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP)
+ beaver_subtitle.offset_left = -210
+ beaver_subtitle.offset_right = 210
+ beaver_subtitle.offset_top = 72
+ beaver_subtitle.offset_bottom = 106
+ beaver_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+ beaver_subtitle.add_theme_color_override("font_shadow_color", Color(0.02, 0.015, 0.013, 0.9))
+ beaver_subtitle.add_theme_constant_override("shadow_offset_y", 2)
  hint = _label(root, "ЛКМ: тяни шашку для удара или нижний край для поворота", 16, Color("eed9b8"))
  hint.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
  hint.position = Vector2(-280, -62)
@@ -93,6 +105,10 @@ func _build_ui() -> void:
  power_fill.color = Color("e9a95f")
  power_fill.size = Vector2.ZERO
  power_back.add_child(power_fill)
+
+func _set_beaver_subtitle(text: String) -> void:
+ beaver_subtitle.text = "" if text.is_empty() else "«%s»" % text
+
 
 func _new_round() -> void:
  for p in pieces:
@@ -284,12 +300,15 @@ func _finish_shot() -> void:
   phase = "round_end"
   if counts[0] == 0 and counts[1] == 0:
    status.text = "НИЧЬЯ!"
+   beaver_voice.say(&"draw")
   elif counts[1] == 0:
    wins += 1
    status.text = "ТЫ ПОБЕДИЛ!"
+   beaver_voice.say(&"lose")
   else:
    losses += 1
    status.text = "БОБЁР ПОБЕДИЛ"
+   beaver_voice.say(&"win")
   score.text = "РАУНД %d     ТЫ %d : %d БОБЁР" % [round_no, wins, losses]
   hint.text = "Следующий раунд через пару секунд…"
   await get_tree().create_timer(2.5).timeout
@@ -330,6 +349,7 @@ func _bot_shoot() -> void:
  direction = direction.normalized().rotated(Vector3.UP, rng.randf_range(-0.08, 0.08))
  phase = "windup"
  _update_ui()
+ beaver_voice.say_turn()
  await beaver.wind_up(best.global_position, direction)
  if is_instance_valid(best) and not best.is_queued_for_deletion():
   await beaver.strike(best.global_position, direction)
