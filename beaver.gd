@@ -4,28 +4,39 @@ extends Node3D
 signal returned_to_stance
 
 const BEAVER_MATERIAL := preload("res://assets/beaver/beaver_material.tres")
-const IDLE_PAW_DIRECTION := Vector3(0, -0.82, 0.57)
-const MIN_STANCE_RADIUS := 2.68
-const APPROACH_DISTANCE := 1.21
-const SHOULDER_OFFSET := 0.80
-const MAX_ARM_EXTENSION := 0.51
+const BLUE_BEAVER_MODEL := preload("res://assets/beaver/blue/beaver.glb")
+const BLUE_BEAVER_MATERIAL := preload("res://assets/beaver/blue/beaver_material.tres")
+const IDLE_PAW_DIRECTION := Vector3(0, -0.985, 0.173)
+const STANCE_RADIUS := 4.19
+const SHOULDER_OFFSET := 1.31
+const MAX_ARM_EXTENSION := 0.25
 
-const STEP_SPACING := 0.225
-const STEP_HEIGHT := 0.095
-const BACKSTEP_DISTANCE := 0.22
+const STEP_SPACING := 1.55
+const STEP_HEIGHT := 0.178
+const WALK_SPEED := 6.15
+
+class ShotSetup:
+	var stance: Vector3
+	var arm: int
+	var cost: float
 
 enum Joint { UPPER, LOWER, END, FINGERTIP }
 
-@onready var _model: Node3D = $Model
-@onready var _rig: Skeleton3D = $Model/Rig/Skeleton3D
-@onready var _body: MeshInstance3D = $Model/Rig/Skeleton3D/Body
 @onready var _voice = $Voice
 
+var _model: Node3D
+var _rig: Skeleton3D
+var _body: MeshInstance3D
+var _is_blue := false
+
 var _arms: Array[PackedInt32Array] = []
+var _shoulders := PackedInt32Array()
 var _legs: Array[PackedInt32Array] = []
 var _foot_rest: Array[Transform3D] = []
 var _next_foot := 0
 var _hips: int
+var _waist: int
+var _waist_rest_inverse: Transform3D
 var _face: ShaderMaterial
 var _jaw: int
 var _eyelids: int
@@ -41,17 +52,34 @@ var _clock := 0.0
 var _strike_arm := 0
 var _shot_facing := IDLE_PAW_DIRECTION
 var _focus_weight := 0.0
+var _reach := 0.0
 var _look_yaw := 0.0
 var _lunge := Vector3.ZERO
 var _busy := false
 
 
 func _ready() -> void:
-	_face = BEAVER_MATERIAL.duplicate() as ShaderMaterial
+	_model = $Model
+	var material := BEAVER_MATERIAL
+	_is_blue = not Engine.is_editor_hint() and randi_range(0, 1) == 1
+	if _is_blue:
+		var blue := BLUE_BEAVER_MODEL.instantiate() as Node3D
+		blue.transform = _model.transform
+		remove_child(_model)
+		_model.queue_free()
+		_model = blue
+		_model.name = &"Model"
+		add_child(_model)
+		material = BLUE_BEAVER_MATERIAL
+	_rig = _model.get_node("Rig/Skeleton3D")
+	_body = _rig.get_node("Body")
+	_face = material.duplicate() as ShaderMaterial
 	_body.material_override = _face
 	_jaw = _body.find_blend_shape_by_name(&"JawOpen")
 	_eyelids = _body.find_blend_shape_by_name(&"Blink")
 	_hips = _rig.find_bone("Hips")
+	_waist = _rig.find_bone("Spine1")
+	_waist_rest_inverse = _rig.get_bone_global_rest(_waist).affine_inverse()
 	_home = position
 	_stance = Vector3(0.0, -_home.z, 0.0)
 	_spine = _rig.find_bone("Spine")
@@ -74,6 +102,7 @@ func _ready() -> void:
 		var tip := _rig.get_bone_global_rest(arm[Joint.FINGERTIP]).origin
 		var frame := Basis.looking_at(hand.origin.direction_to(tip), Vector3.UP, true)
 		_arms.append(arm)
+		_shoulders.append(_rig.get_bone_parent(arm[Joint.UPPER]))
 		_hand_frames.append(frame.inverse() * hand.basis)
 		_fingertips.append(frame.inverse() * (tip - hand.origin))
 	_rest()
@@ -100,96 +129,161 @@ func _animate_face(delta: float) -> void:
 	_body.set_blend_shape_value(_jaw, _mouth)
 
 
-func wind_up(checker: Vector3, direction: Vector3) -> void:
+func shot_setup(checker: Vector3, direction: Vector3) -> ShotSetup:
+	var board := get_parent_node_3d()
+	var target := board.to_local(checker)
+	var forward := (board.global_basis.inverse() * direction).normalized()
+	if forward.is_zero_approx():
+		return null
+	var right := Vector3.UP.cross(forward)
+	var best: ShotSetup
+	for arm in range(_arms.size()):
+		# Put the striking shoulder just outside the shot line, toward the back of the paw.
+		var lane := target - right * _side_sign(arm) * SHOULDER_OFFSET
+		lane.y = 0.0
+		var across := lane.dot(right)
+		if absf(across) >= STANCE_RADIUS:
+			continue
+		var setback := lane.dot(forward) + sqrt(STANCE_RADIUS * STANCE_RADIUS - across * across)
+		if setback < 0.74 or setback > 4.01:
+			continue
+		var base := lane - forward * setback
+		var angle := atan2(base.x, -base.z)
+		var yaw := angle_difference(-angle, atan2(forward.x, forward.z))
+		if absf(yaw) > 0.83:
+			continue
+		var travel := absf(angle_difference(_stance.x, angle)) * STANCE_RADIUS
+		var score := travel * 0.55 + absf(yaw) * 0.36 + maxf(setback - 1.5, 0.0) * 0.9
+		# Prefer the sides and the back so the beaver stays out of the player's view.
+		score += maxf(base.z - 0.4, 0.0) * 0.8
+		if best == null or score < best.cost:
+			best = ShotSetup.new()
+			best.stance = Vector3(angle, STANCE_RADIUS, yaw)
+			best.arm = arm
+			best.cost = score
+	return best
+
+
+func wait_for_stance() -> void:
 	while _busy:
 		await returned_to_stance
+
+
+func wind_up(checker: Vector3, direction: Vector3, setup: ShotSetup = null) -> bool:
+	await wait_for_stance()
+	if setup == null:
+		setup = shot_setup(checker, direction)
+	if setup == null:
+		return false
 	_busy = true
-	var target := get_parent_node_3d().to_local(checker)
-	var radius := Vector2(target.x, target.z).length()
-	var local_direction := get_parent_node_3d().global_basis.inverse() * direction
-	var approach_point := target - local_direction * maxf(0.0, (1.3 - radius) * 0.54)
-	var angle := clampf(atan2(approach_point.x, -approach_point.z), -2.65, 2.65)
-	var aim_in_stance := target.rotated(Vector3.UP, angle)
-	_strike_arm = 0 if aim_in_stance.x + angle * 0.55 < 0.0 else 1
-	var side := _side_sign(_strike_arm)
-	var stance := Vector3(angle, maxf(MIN_STANCE_RADIUS, radius + APPROACH_DISTANCE),
-		-side * SHOULDER_OFFSET)
-	# Back away from the rim before turning or stepping sideways around it.
-	if absf(stance.x - _stance.x) > 0.18 or absf(stance.z - _stance.z) > 0.45:
-		var clearance := maxf(_stance.y + BACKSTEP_DISTANCE, stance.y)
-		await _walk_to(Vector3(_stance.x, clearance, _stance.z))
-	await _walk_to(stance)
+	_strike_arm = setup.arm
+	await _walk_to(setup.stance)
 
 	var local_target := to_local(checker)
-	var reach_across_board := clampf((local_target.z - APPROACH_DISTANCE) / 1.3, 0.0, 1.0)
-	_lunge = Vector3(0.0, 0.10, 0.43) * reach_across_board / _model.scale.x
-	_look_yaw = clampf(atan2(local_target.x, local_target.z), -0.50, 0.50)
+	var forward := global_basis.inverse() * direction
+	_reach = clampf((local_target.z - 1.25) / 2.4, 0.0, 1.0)
+	_lunge = Vector3(_side_sign(_strike_arm) * -0.09, 0.33, 0.49) * _reach / _model.scale.x
+	_look_yaw = clampf(atan2(local_target.x, local_target.z), -0.56, 0.56)
 	var facing := _strike_facing(direction)
-	var ready_wrist := _contact(checker, direction, facing) + Vector3(side * 0.22, 0.46, -0.30)
+	var contact := to_local(_contact_point(checker, direction))
+	var ready_tip := contact - forward * 0.47 + Vector3.UP * 0.31
+	var start_tip := _tip_position(_strike_arm)
 	var lift := _physics_tween()
 	lift.tween_method(func(t: float) -> void:
-		_focus(t)
-		_shot_facing = IDLE_PAW_DIRECTION.lerp(facing, t).normalized()
-		_pose_arm(_strike_arm, _idle_wrist(_strike_arm).lerp(ready_wrist, t), _shot_facing)
-		, 0.0, 1.0, 0.35).set_trans(Tween.TRANS_SINE)
+		var arc := sin(PI * t)
+		_pose_reach(0.58 * t - 0.12 * arc)
+		var tip := start_tip.lerp(ready_tip, t) + Vector3.UP * 0.28 * arc
+		_shot_facing = _hip_facing(_strike_arm).lerp(facing, t).normalized()
+		_pose_tip(tip, _shot_facing, t, 1.0 - t)
+		, 0.0, 1.0, 0.23).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	await lift.finished
+	return true
 
 
-func strike(checker: Vector3, direction: Vector3) -> void:
-	var start := _wrist_position(_strike_arm)
+func strike(checker: Vector3, direction: Vector3) -> bool:
+	var contact := to_local(_contact_point(checker, direction))
+	var forward := global_basis.inverse() * direction
 	_shot_facing = _strike_facing(direction)
-	var contact := _contact(checker, direction, _shot_facing)
+	var approach: Array[Vector3] = []
 	var swing := _physics_tween()
 	swing.tween_method(func(t: float) -> void:
-		_focus(1.0 + t * 0.12)
-		_pose_arm(_strike_arm, start.lerp(contact, t), _shot_facing, t)
-		, 0.0, 1.0, 0.10).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		_pose_reach(lerpf(0.58, 1.0, t))
+		var remaining := 1.0 - t
+		var tip := contact - forward * 0.47 * remaining + Vector3.UP * 0.31 * remaining * remaining
+		_pose_tip(tip, _shot_facing)
+		if t >= 0.55:
+			approach.append(_tip_position(_strike_arm))
+		, 0.0, 1.0, 0.115).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 	await swing.finished
+	if approach.size() < 2 or approach[-1].distance_to(contact) >= 0.065:
+		return false
+	var push := approach[-1] - approach[0]
+	push.y = 0.0
+	return push.normalized().dot(forward) >= 0.96
 
 
 func recover(direction := Vector3.ZERO) -> void:
-	var start := _wrist_position(_strike_arm)
-	var through := start + global_basis.inverse() * direction * 0.14 + Vector3.UP * 0.08
+	var start := _tip_position(_strike_arm)
+	var forward := global_basis.inverse() * direction
+	var through := start + forward * 0.21 + Vector3.UP * 0.13
 	var facing := _shot_facing
 	var weight := _focus_weight
 	var tween := _physics_tween()
 	tween.tween_method(func(t: float) -> void:
-		_pose_arm(_strike_arm, start.lerp(through, t), facing, 1.0)
-		, 0.0, 1.0, 0.11).set_trans(Tween.TRANS_SINE)
+		_pose_reach(lerpf(weight, weight * 0.76, t))
+		_pose_tip(start.lerp(through, t), facing)
+		, 0.0, 1.0, 0.095).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tween.tween_method(func(t: float) -> void:
-		_focus(weight * (1.0 - t))
-		_pose_arm(_strike_arm, through.lerp(_idle_wrist(_strike_arm), t),
-			facing.lerp(IDLE_PAW_DIRECTION, t).normalized(), 1.0 - t)
-		, 0.0, 1.0, 0.31).set_trans(Tween.TRANS_SINE)
+		_pose_reach(weight * 0.76 * (1.0 - t))
+		var hip_facing := _hip_facing(_strike_arm)
+		var rest_facing := facing.lerp(hip_facing, t).normalized()
+		var rest_tip := _hip_wrist(_strike_arm) + _finger_offset(_strike_arm, hip_facing)
+		var tip := through.lerp(rest_tip, t) + Vector3.UP * 0.18 * sin(PI * t)
+		_pose_tip(tip, rest_facing, 1.0 - t, t)
+		, 0.0, 1.0, 0.24).set_trans(Tween.TRANS_SINE)
 	await tween.finished
 	await _walk_to(Vector3(0.0, -_home.z, 0.0))
 	_busy = false
 	returned_to_stance.emit()
 
 
+func _pose_reach(weight: float) -> void:
+	_shift_hips(Vector3(_side_sign(_strike_arm) * 0.08, -0.035 - _reach * 0.035, 0.015) * weight)
+	_focus(weight)
+	for index in _legs.size():
+		_pose_foot(index, _foot_rest[index])
+
+
 # Store each foot in board space until its next step, so the support foot stays planted.
 func _walk_to(goal: Vector3) -> void:
 	var start := _stance
+	goal.x = start.x + angle_difference(start.x, goal.x)
 	var change := goal - start
 	var arc := absf(change.x) * (start.y + goal.y) * 0.5
-	var distance := Vector2(arc + absf(change.z), change.y).length()
+	var distance := Vector2(arc + absf(change.z) * 0.53, change.y).length()
 	if distance < 0.01:
 		_stand_at(goal)
 		return
 
-	var steps := ceili(distance / STEP_SPACING) + 1
-	var duration := clampf(distance / (steps * 1.45) + 0.07, 0.14, 0.23)
-	duration = minf(duration, 4.0 / steps)
+	# Take a shorter first stride from the standing pose and land ahead of the hips.
+	var first_stride := lerpf(0.64, 0.50, smoothstep(1.6, 4.0, distance))
+	var travel_steps := ceili(distance / STEP_SPACING + 1.0 - first_stride)
+	var stride_span := travel_steps - 1.0 + first_stride
+	var minimum_duration := lerpf(0.145, 0.195, smoothstep(0.50, 1.5, distance))
+	var duration := clampf(distance / (maxf(stride_span, 1.0) * WALK_SPEED), minimum_duration, 0.275)
 	var planted := [_foot_at(0, start), _foot_at(1, start)]
 	var walk := _physics_tween()
-	for i in range(steps):
+	for i in range(travel_steps + 1):
 		var moving := _next_foot
-		var before := float(i) / (steps - 1)
-		var after := minf(float(i + 1) / (steps - 1), 1.0)
-		var reach := minf(float(i + 1.18) / (steps - 1), 1.0)
+		var stride_end := i + first_stride
+		var before := maxf(stride_end - 1.0, 0.0) / stride_span
+		var after := minf(stride_end / stride_span, 1.0)
+		var reach := minf((stride_end + 0.50) / stride_span, 1.0)
 		var landing := _foot_at(moving, start.lerp(goal, reach))
+		var stride := Vector2(float(i > 0), float(i < travel_steps))
+		var step_duration := duration if i < travel_steps else duration * 0.76
 		walk.tween_method(_step.bind(start.lerp(goal, before), start.lerp(goal, after),
-			moving, planted[1 - moving], planted[moving], landing), 0.0, 1.0, duration)
+			moving, planted[1 - moving], planted[moving], landing, stride), 0.0, 1.0, step_duration)
 		planted[moving] = landing
 		_next_foot = 1 - moving
 	await walk.finished
@@ -197,35 +291,62 @@ func _walk_to(goal: Vector3) -> void:
 
 
 func _step(t: float, start: Vector3, end: Vector3, moving: int,
-		support: Transform3D, takeoff: Transform3D, landing: Transform3D) -> void:
+		support: Transform3D, takeoff: Transform3D, landing: Transform3D, stride: Vector2) -> void:
 	_stand_at(start.lerp(end, t))
 	var lift := sin(PI * t)
+	var momentum := smoothstep(0.0, 1.0, lerpf(stride.x, stride.y, t))
 	var swing := takeoff.interpolate_with(landing, smoothstep(0.0, 1.0, t))
-	swing.origin.y += STEP_HEIGHT * lift
+	swing.origin.y += STEP_HEIGHT * lift * lerpf(0.65, 1.0, momentum)
 	swing.basis = swing.basis.rotated(Vector3.RIGHT.rotated(Vector3.UP, rotation.y),
 		0.13 * sin(TAU * t))
 
-	_shift_hips(Vector3(_side_sign(1 - moving) * 0.043 * lift, -0.067 + 0.026 * lift, 0.0))
-	_rest_body()
+	var swing_weight := cos(PI * t) * _side_sign(moving)
+	var hips := Vector3(_side_sign(1 - moving) * 0.058 * lift, -0.151 + 0.021 * lift, 0.0)
+	var hip_offset := Vector3(0.0, -0.047, 0.0).lerp(hips, momentum)
 	var board_to_rig := (transform * _model.transform).affine_inverse()
-	_pose_foot(1 - moving, board_to_rig * support)
+	var support_pose := board_to_rig * support
+	_shift_hips(hip_offset)
+	_keep_support_reachable(1 - moving, support_pose.origin, hip_offset)
+	_focus(0.0)
+	_rotate_from_rest(_spine, Vector3(lerpf(0.035, 0.085, momentum),
+		-swing_weight * 0.091 * momentum, swing_weight * 0.032 * momentum))
+	_rotate_from_rest(_head, Vector3(lerpf(-0.047, -0.10, momentum),
+		swing_weight * 0.055 * momentum, -swing_weight * 0.025 * momentum))
+	for index in _arms.size():
+		var arm_swing := _side_sign(index) * swing_weight
+		var swing_wrist := _walking_wrist(index) + Vector3(0.0, 0.028 + 0.035 * lift, 0.11 * arm_swing)
+		var wrist := _hip_wrist(index).lerp(swing_wrist, momentum)
+		var facing := _hip_facing(index).lerp(Vector3(0, -0.985, 0.17 + 0.09 * arm_swing), momentum)
+		_pose_arm(index, wrist, facing.normalized(), 0.0, 1.0 - momentum)
+	_pose_foot(1 - moving, support_pose)
 	_pose_foot(moving, board_to_rig * swing)
 
 
+func _keep_support_reachable(index: int, ankle: Vector3, hip_offset: Vector3) -> void:
+	var leg := _legs[index]
+	var hip := _rig.get_bone_global_pose(leg[Joint.UPPER]).origin
+	var reach := ankle - hip
+	var length := _rig.get_bone_rest(leg[Joint.LOWER]).origin.length() \
+		+ _rig.get_bone_rest(leg[Joint.END]).origin.length() - 0.003
+	if reach.length_squared() > length * length:
+		var weight_shift := reach - reach.limit_length(length)
+		_shift_hips(hip_offset + _model.transform.basis * weight_shift)
+
+
 func _foot_at(index: int, stance: Vector3) -> Transform3D:
-	var body := Transform3D(Basis(Vector3.UP, -stance.x), _stance_position(stance))
+	var body := Transform3D(Basis(Vector3.UP, -stance.x + stance.z), _stance_position(stance))
 	return body * _model.transform * _foot_rest[index]
 
 
-# The stance stores the angle around the board, distance from its center and lateral step.
+# The stance stores the angle around the board, radius and yaw relative to the table.
 func _stand_at(stance: Vector3) -> void:
 	_stance = stance
-	rotation.y = -stance.x
+	rotation.y = -stance.x + stance.z
 	position = _stance_position(stance)
 
 
 func _stance_position(stance: Vector3) -> Vector3:
-	return Vector3(_home.x, _home.y, 0.0) + Vector3(stance.z, 0.0, -stance.y).rotated(
+	return Vector3(_home.x, _home.y, 0.0) + Vector3(0.0, 0.0, -stance.y).rotated(
 		Vector3.UP, -stance.x)
 
 
@@ -240,7 +361,7 @@ func _rest() -> void:
 
 func _rest_body() -> void:
 	_focus(0.0)
-	_pose_arm(_strike_arm, _idle_wrist(_strike_arm), IDLE_PAW_DIRECTION)
+	_pose_arm(_strike_arm, _hip_wrist(_strike_arm), _hip_facing(_strike_arm), 0.0, 1.0)
 
 
 func _shift_hips(offset: Vector3) -> void:
@@ -260,33 +381,71 @@ func _focus(weight: float) -> void:
 	var spine_parent := _rig.get_bone_parent(_spine)
 	var spine_offset := _rig.get_bone_global_pose(spine_parent).basis.inverse() * _lunge * weight
 	_rig.set_bone_pose_position(_spine, _rig.get_bone_rest(_spine).origin + spine_offset)
-	var lean := lerpf(0.035 + 0.015 * sin(_clock * 2.7), 0.33, weight)
+	var lean := lerpf(0.035 + 0.015 * sin(_clock * 2.7), lerpf(0.20, 0.615, _reach), weight)
 	var roll := _side_sign(_strike_arm) * weight * 0.075
-	_rotate_from_rest(_spine, Vector3(lean, _look_yaw * weight * 0.14, roll))
+	var twist := -_side_sign(_strike_arm) * _reach * weight * 0.22
+	_rotate_from_rest(_spine, Vector3(lean, _look_yaw * weight * 0.14 + twist, roll))
 	_rotate_from_rest(_head, Vector3(-lean * 1.35, _look_yaw * weight + 0.035 * sin(_clock),
 		-roll + 0.018 * sin(_clock * 1.5)))
 	var resting_arm := 1 - _strike_arm
-	_pose_arm(resting_arm, _idle_wrist(resting_arm), IDLE_PAW_DIRECTION)
+	var release := clampf(weight * 1.8, 0.0, 1.0)
+	var counterbalance := Vector3(_side_sign(resting_arm) * 0.09, 0.11, -0.19) * weight
+	var wrist := _hip_wrist(resting_arm).lerp(_walking_wrist(resting_arm) + counterbalance, release)
+	var facing := _hip_facing(resting_arm).lerp(IDLE_PAW_DIRECTION, release).normalized()
+	_pose_arm(resting_arm, wrist, facing, 0.0, 1.0 - release)
 
 
-func _idle_wrist(index: int) -> Vector3:
-	return Vector3(_side_sign(index) * 1.01, -0.34 + 0.015 * sin(_clock * 3.1), 0.22)
+# Waist targets follow the torso as the beaver breathes, leans, and takes a step.
+func _waist_motion() -> Transform3D:
+	return _rig.get_bone_global_pose(_waist) * _waist_rest_inverse
+
+
+func _hip_wrist(index: int) -> Vector3:
+	var anchor := Vector3(1.52, 0.10, 0.43)
+	if _is_blue:
+		anchor = Vector3(1.31, 0.09, 0.19)
+	anchor.x *= _side_sign(index)
+	return _model.transform * _waist_motion() * (_model.transform.affine_inverse() * anchor)
+
+
+func _hip_facing(index: int) -> Vector3:
+	var tangent := Vector3(-0.52, 0.24, 0.82) if _is_blue else Vector3(-0.54, 0.27, 0.78)
+	tangent.x *= _side_sign(index)
+	return (_waist_motion().basis * tangent).normalized()
+
+
+func _walking_wrist(index: int) -> Vector3:
+	var sway := sin(_clock * 2.1 + index * 0.55)
+	return Vector3(_side_sign(index) * 1.53, 0.372 + 0.014 * sway, 0.065 + 0.025 * sway)
 
 
 func _side_sign(index: int) -> float:
 	return float(index * 2 - 1)
 
 
-func _pose_arm(index: int, wrist: Vector3, facing: Vector3, extension_weight := 0.0) -> void:
+func _pose_arm(index: int, wrist: Vector3, facing: Vector3, extension_weight := 0.0,
+		hip_weight := 0.0) -> void:
+	var side := _side_sign(index)
 	var arm := _arms[index]
+	var hip_elbow := Vector3(side, 0.15, -0.18)
+	var hip_shoulder_drop := 0.44 if _is_blue else 0.45
+	var hip_upper_extension := 0.80 if _is_blue else 0.91
+	var hip_wrist_roll := 1.60
+	var clavicle_drop := -side * hip_weight * hip_shoulder_drop
+	_rotate_from_rest(_shoulders[index], Vector3(0.0, 0.0, clavicle_drop))
 	var shoulder := _rig.get_bone_global_pose(arm[Joint.UPPER]).origin
 	var reach := _model.transform.affine_inverse() * wrist - shoulder
-	_solve_limb(arm, reach, Vector3(_side_sign(index) * 0.85, -1.0, -0.35), extension_weight)
-	_set_rig_basis(arm[Joint.END], Basis.looking_at(facing, Vector3.UP, true) * _hand_frames[index])
+	var elbow_height := lerpf(-1.0, 0.84, extension_weight)
+	var pole := Vector3(side * 0.96, elbow_height, -0.45).lerp(hip_elbow, hip_weight)
+	_solve_limb(arm, reach, pole, extension_weight, 1.0 + hip_upper_extension * hip_weight)
+	var grip := Basis.looking_at(facing, Vector3.UP, true)
+	grip = grip.rotated(facing, -side * hip_weight * hip_wrist_roll)
+	_set_rig_basis(arm[Joint.END], grip * _hand_frames[index])
 
 
 # Solve the elbow or knee triangle in skeleton space using the imported bone lengths.
-func _solve_limb(limb: PackedInt32Array, reach: Vector3, pole: Vector3, extension_weight: float) -> void:
+func _solve_limb(limb: PackedInt32Array, reach: Vector3, pole: Vector3, extension_weight: float,
+		upper_scale := 1.0) -> void:
 	var upper := limb[Joint.UPPER]
 	var lower := limb[Joint.LOWER]
 	var end := limb[Joint.END]
@@ -295,7 +454,7 @@ func _solve_limb(limb: PackedInt32Array, reach: Vector3, pole: Vector3, extensio
 	_rig.set_bone_pose_rotation(upper, upper_rest.basis.get_rotation_quaternion())
 	_rig.set_bone_pose_rotation(lower, lower_rest.basis.get_rotation_quaternion())
 	var aim := reach.normalized() if not reach.is_zero_approx() else Vector3.DOWN
-	var upper_offset := lower_rest.origin
+	var upper_offset := lower_rest.origin * upper_scale
 	var lower_offset := _rig.get_bone_rest(end).origin
 	var length := upper_offset.length() + lower_offset.length()
 	# Let the striking paw stretch briefly for checkers farther across the board.
@@ -333,18 +492,26 @@ func _set_rig_basis(bone: int, basis_in_rig: Basis) -> void:
 	_rig.set_bone_pose_rotation(bone, local_basis.orthonormalized().get_rotation_quaternion())
 
 
-func _wrist_position(index: int) -> Vector3:
-	return _model.transform * _rig.get_bone_global_pose(_arms[index][Joint.END]).origin
+func _tip_position(index: int) -> Vector3:
+	return _model.transform * _rig.get_bone_global_pose(_arms[index][Joint.FINGERTIP]).origin
 
 
 func _strike_facing(direction: Vector3) -> Vector3:
-	return (global_basis.inverse() * direction + Vector3.DOWN * 0.36).normalized()
+	return (global_basis.inverse() * direction + Vector3.DOWN * 0.26).normalized()
 
 
-func _contact(checker: Vector3, direction: Vector3, facing: Vector3) -> Vector3:
-	var tip := to_local(checker + Vector3.UP * 0.012 - direction * Checker.RADIUS)
-	var finger := Basis.looking_at(facing, Vector3.UP, true) * _fingertips[_strike_arm]
-	return tip - _model.transform.basis * finger
+func _contact_point(checker: Vector3, direction: Vector3) -> Vector3:
+	return checker + Vector3.UP * 0.035 - direction * Checker.RADIUS
+
+
+func _finger_offset(index: int, facing: Vector3) -> Vector3:
+	var offset := Basis.looking_at(facing, Vector3.UP, true) * _fingertips[index]
+	return _model.transform.basis * offset
+
+
+func _pose_tip(tip: Vector3, facing: Vector3, reach_weight := 1.0, hip_weight := 0.0) -> void:
+	_pose_arm(_strike_arm, tip - _finger_offset(_strike_arm, facing), facing, reach_weight, hip_weight)
+
 
 
 func _physics_tween() -> Tween:

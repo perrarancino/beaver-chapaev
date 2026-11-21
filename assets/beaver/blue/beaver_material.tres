@@ -1,0 +1,16 @@
+[gd_resource type="ShaderMaterial" load_steps=4 format=3]
+
+[ext_resource type="Shader" path="res://assets/beaver/beaver_face.gdshader" id="face"]
+[ext_resource type="Texture2D" path="res://assets/beaver/blue/albedo.png" id="albedo"]
+[ext_resource type="Texture2D" path="res://assets/beaver/blue/normal.png" id="normal"]
+
+[resource]
+shader = ExtResource("face")
+shader_parameter/albedo_texture = ExtResource("albedo")
+shader_parameter/normal_texture = ExtResource("normal")
+shader_parameter/left_eye_center = Vector2(635, 557)
+shader_parameter/right_eye_center = Vector2(642, 893)
+shader_parameter/left_eye_axis = Vector2(-0.52, 0.85)
+shader_parameter/right_eye_axis = Vector2(0.52, 0.85)
+shader_parameter/mouth_center = Vector2(768, 724)
+shader_parameter/mouth_axis = Vector2(0, 1)

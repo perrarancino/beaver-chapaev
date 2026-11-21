@@ -49,6 +49,8 @@ func _ready() -> void:
 func say_turn() -> void:
 	say(TURN_LINES[_turn_line])
 	_turn_line = (_turn_line + 1) % TURN_LINES.size()
+	if playing:
+		await finished
 
 
 func say(cue: StringName) -> void:

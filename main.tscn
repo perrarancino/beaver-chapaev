@@ -1,68 +1,33 @@
-[gd_scene load_steps=23 format=3]
+[gd_scene format=3 uid="uid://c0d484v0jp51y"]
 
-[ext_resource type="Script" path="res://game.gd" id="game"]
-[ext_resource type="PackedScene" path="res://piece_light.tscn" id="light_piece"]
+[ext_resource type="Shader" uid="uid://bfq8aj2ca23j3" path="res://aim_arrow.gdshader" id="aim_arrow"]
+[ext_resource type="Script" uid="uid://c1vgoyfxbt0c0" path="res://beaver.gd" id="beaver"]
+[ext_resource type="PackedScene" uid="uid://5q3aevj4vh6p" path="res://assets/beaver/beaver.glb" id="beaver_model"]
+[ext_resource type="Script" uid="uid://bwgvrarpwbtj8" path="res://beaver_voice.gd" id="beaver_voice"]
 [ext_resource type="PackedScene" path="res://piece_dark.tscn" id="dark_piece"]
-[ext_resource type="Script" path="res://beaver.gd" id="beaver"]
-[ext_resource type="Shader" path="res://room_surface.gdshader" id="room_surface"]
-[ext_resource type="Shader" path="res://aim_arrow.gdshader" id="aim_arrow"]
-[ext_resource type="PackedScene" path="res://assets/beaver/beaver.glb" id="beaver_model"]
-[ext_resource type="Script" path="res://beaver_voice.gd" id="beaver_voice"]
-
-[sub_resource type="StandardMaterial3D" id="wood"]
-albedo_color = Color(0.20, 0.095, 0.045, 1)
-roughness = 0.7
-
-[sub_resource type="StandardMaterial3D" id="frame"]
-albedo_color = Color(0.12, 0.055, 0.028, 1)
-roughness = 0.7
-
-[sub_resource type="StandardMaterial3D" id="pale"]
-albedo_color = Color(0.66, 0.49, 0.30, 1)
-roughness = 0.7
-
-[sub_resource type="StandardMaterial3D" id="dark"]
-albedo_color = Color(0.24, 0.13, 0.075, 1)
-roughness = 0.7
-
-[sub_resource type="ShaderMaterial" id="floor"]
-shader = ExtResource("room_surface")
-shader_parameter/base_color = Color(0.035, 0.037, 0.04, 1)
-
-[sub_resource type="ShaderMaterial" id="wall"]
-shader = ExtResource("room_surface")
-shader_parameter/base_color = Color(0.065, 0.07, 0.07, 1)
-
-[sub_resource type="StandardMaterial3D" id="black"]
-albedo_color = Color(0.025, 0.018, 0.016, 1)
-roughness = 0.7
-
-[sub_resource type="ShaderMaterial" id="arrow_material"]
-resource_local_to_scene = true
-shader = ExtResource("aim_arrow")
-
-[sub_resource type="PlaneMesh" id="arrow_plane"]
-size = Vector2(0.36, 1.0)
+[ext_resource type="Script" uid="uid://5lje83w63i6o" path="res://game.gd" id="game"]
+[ext_resource type="PackedScene" path="res://piece_light.tscn" id="light_piece"]
+[ext_resource type="PackedScene" path="res://assets/izba/river_lodge.tscn" id="izba"]
+[ext_resource type="Texture2D" path="res://assets/izba/materials/timber_color.jpg" id="table_wood"]
+[ext_resource type="Shader" path="res://assets/izba/board_wood.gdshader" id="board_wood"]
+[ext_resource type="Texture2D" path="res://assets/izba/materials/timber_normal.jpg" id="table_wood_normal"]
 
 [sub_resource type="Environment" id="env"]
 background_mode = 1
 background_color = Color(0.025, 0.03, 0.04, 1)
-ambient_light_source = 3
-ambient_light_color = Color(0.34, 0.32, 0.31, 1)
-ambient_light_energy = 0.28
+ambient_light_source = 2
+ambient_light_color = Color(0.57, 0.49, 0.41, 1)
+ambient_light_energy = 0.17
 tonemap_mode = 2
 
-[sub_resource type="CylinderMesh" id="round_board"]
-top_radius = 2.35
-bottom_radius = 2.35
-height = 0.3
-radial_segments = 96
-
-[sub_resource type="CylinderMesh" id="round_surface"]
-top_radius = 2.32
-bottom_radius = 2.32
-height = 0.012
-radial_segments = 96
+[sub_resource type="StandardMaterial3D" id="frame"]
+albedo_color = Color(0.69, 0.54, 0.39, 1)
+albedo_texture = ExtResource("table_wood")
+roughness = 0.64
+normal_enabled = true
+normal_scale = 0.48
+normal_texture = ExtResource("table_wood_normal")
+uv1_triplanar = true
 
 [sub_resource type="CylinderMesh" id="round_table"]
 top_radius = 2.35
@@ -70,350 +35,369 @@ bottom_radius = 2.35
 height = 0.29
 radial_segments = 96
 
+[sub_resource type="StandardMaterial3D" id="wood"]
+albedo_color = Color(1.1, 0.91, 0.66, 1)
+albedo_texture = ExtResource("table_wood")
+roughness = 0.57
+normal_enabled = true
+normal_scale = 0.42
+normal_texture = ExtResource("table_wood_normal")
+uv1_triplanar = true
+
+[sub_resource type="CylinderMesh" id="round_board"]
+top_radius = 2.35
+bottom_radius = 2.35
+height = 0.3
+radial_segments = 96
+
+[sub_resource type="ShaderMaterial" id="pale"]
+shader = ExtResource("board_wood")
+shader_parameter/wood_grain = ExtResource("table_wood")
+
+[sub_resource type="CylinderMesh" id="round_surface"]
+top_radius = 2.32
+bottom_radius = 2.32
+height = 0.012
+radial_segments = 96
+
+[sub_resource type="StandardMaterial3D" id="black"]
+albedo_color = Color(0.025, 0.018, 0.016, 1)
+roughness = 0.7
+
 [sub_resource type="BoxMesh" id="cube"]
 
-[node name="Game" type="Node3D"]
+[sub_resource type="ShaderMaterial" id="arrow_material"]
+resource_local_to_scene = true
+render_priority = 0
+shader = ExtResource("aim_arrow")
+shader_parameter/arrow_length = 1.0
+shader_parameter/edge_color = Color(0.035, 0.18, 0.2, 1)
+shader_parameter/shaft_color = Color(0.27, 0.78, 0.73, 1)
+shader_parameter/tip_color = Color(0.76, 1, 0.94, 1)
+
+[sub_resource type="PlaneMesh" id="arrow_plane"]
+size = Vector2(0.36, 1)
+
+[node name="Game" type="Node3D" unique_id=1128194104]
 script = ExtResource("game")
 
-[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=598146625]
 environment = SubResource("env")
 
-[node name="Camera3D" type="Camera3D" parent="."]
-position = Vector3(0, 5.2, 7.8)
-rotation_degrees = Vector3(-30.5, 0, 0)
-fov = 43.0
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1590391247]
+position = Vector3(0, 2.15, 5.48)
+rotation_degrees = Vector3(-12, 0, 0)
 current = true
+fov = 51.5
 
-[node name="KeyLight" type="SpotLight3D" parent="."]
-position = Vector3(0, 5.8, 0)
-rotation_degrees = Vector3(-90, 0, 0)
-light_color = Color(1, 0.76, 0.51, 1)
-light_energy = 4.8
+[node name="KeyLight" type="SpotLight3D" parent="." unique_id=1062631679]
+position = Vector3(0, 3.55, -1.04)
+rotation_degrees = Vector3(-106, 0, 0)
+light_color = Color(1, 0.79, 0.56, 1)
+light_energy = 1.8
+light_size = 0.17
 shadow_enabled = true
-shadow_blur = 1.8
-light_size = 0.2
 shadow_bias = 0.09
-shadow_opacity = 0.82
 shadow_reverse_cull_face = true
-spot_range = 9.0
-spot_angle = 32.0
+shadow_opacity = 0.82
+shadow_blur = 1.8
+spot_range = 8.0
+spot_angle = 48.0
 
-[node name="WarmFill" type="OmniLight3D" parent="."]
-position = Vector3(3, 3.2, 1.2)
-light_color = Color(1, 0.48, 0.23, 1)
-light_energy = 1.7
-omni_range = 10.0
+[node name="BeaverFill" type="OmniLight3D" parent="." unique_id=204658940]
+position = Vector3(0, 3.42, -0.08)
+light_color = Color(1, 0.91, 0.79, 1)
+light_energy = 0.58
+omni_range = 5.6
 
-[node name="CoolRim" type="OmniLight3D" parent="."]
-position = Vector3(-2.5, 3.0, -4.0)
-light_color = Color(0.39, 0.56, 1, 1)
-light_energy = 2.1
-omni_range = 9.0
+[node name="CheckerFill" type="SpotLight3D" parent="."]
+position = Vector3(0, 2.45, 3.7)
+rotation = Vector3(-0.585, 0, 0)
+light_color = Color(1, 0.94, 0.85, 1)
+light_energy = 0.82
+light_cull_mask = 2
+spot_range = 8.0
+spot_angle = 39.0
+spot_angle_attenuation = 0.65
 
-[node name="BeaverFill" type="OmniLight3D" parent="."]
-position = Vector3(0, 2.55, -0.30)
-light_color = Color(1, 0.88, 0.76, 1)
-light_energy = 1.80
-omni_range = 7.0
+[node name="BoardPivot" type="Node3D" parent="." unique_id=321082817]
 
-[node name="BoardPivot" type="Node3D" parent="."]
-
-[node name="Floor" type="MeshInstance3D" parent="."]
-position = Vector3(0, -2.2, 0)
-scale = Vector3(24, 0.2, 26)
-mesh = SubResource("cube")
-material_override = SubResource("floor")
-cast_shadow = 0
-
-[node name="BackWall" type="MeshInstance3D" parent="."]
-position = Vector3(0, 0, -6)
-scale = Vector3(12, 5, 0.2)
-mesh = SubResource("cube")
-material_override = SubResource("wall")
-cast_shadow = 0
-
-[node name="Table" type="MeshInstance3D" parent="BoardPivot"]
-position = Vector3(0, -0.455, 0)
-mesh = SubResource("round_table")
+[node name="Table" type="MeshInstance3D" parent="BoardPivot" unique_id=1151933504]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.455, 0)
 material_override = SubResource("frame")
-cast_shadow = 0
+mesh = SubResource("round_table")
 
-[node name="BoardBase" type="MeshInstance3D" parent="BoardPivot"]
-position = Vector3(0, -0.16, 0)
-mesh = SubResource("round_board")
+[node name="BoardBase" type="MeshInstance3D" parent="BoardPivot" unique_id=948284368]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.16, 0)
 material_override = SubResource("wood")
-cast_shadow = 0
+mesh = SubResource("round_board")
 
-[node name="BoardSurface" type="MeshInstance3D" parent="BoardPivot"]
-position = Vector3(0, -0.004, 0)
-mesh = SubResource("round_surface")
+[node name="BoardSurface" type="MeshInstance3D" parent="BoardPivot" unique_id=676405643]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.004, 0)
 material_override = SubResource("pale")
 cast_shadow = 0
+mesh = SubResource("round_surface")
 
-[node name="Grid" type="Node3D" parent="BoardPivot"]
+[node name="Grid" type="Node3D" parent="BoardPivot" unique_id=483754728]
 
-[node name="X_0" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(-2.0999999999999996, 0.004, 0)
-scale = Vector3(0.012, 0.004, 1.87617)
-mesh = SubResource("cube")
+[node name="X_0" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=1780306690]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 1.87617, -2.1, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_0" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, -2.0999999999999996)
-scale = Vector3(1.87617, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_0" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=400298132]
+transform = Transform3D(1.87617, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, -2.1)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="X_1" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(-1.75, 0.004, 0)
-scale = Vector3(0.012, 0.004, 2.98496)
 mesh = SubResource("cube")
+
+[node name="X_1" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=2143825011]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 2.98496, -1.75, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_1" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, -1.75)
-scale = Vector3(2.98496, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_1" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=1309396672]
+transform = Transform3D(2.98496, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, -1.75)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="X_2" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(-1.4, 0.004, 0)
-scale = Vector3(0.012, 0.004, 3.64966)
 mesh = SubResource("cube")
+
+[node name="X_2" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=1051795759]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 3.64966, -1.4, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_2" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, -1.4)
-scale = Vector3(3.64966, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_2" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=1547051292]
+transform = Transform3D(3.64966, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, -1.4)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="X_3" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(-1.0499999999999998, 0.004, 0)
-scale = Vector3(0.012, 0.004, 4.09268)
 mesh = SubResource("cube")
+
+[node name="X_3" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=652561434]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 4.09268, -1.05, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_3" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, -1.0499999999999998)
-scale = Vector3(4.09268, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_3" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=913079138]
+transform = Transform3D(4.09268, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, -1.05)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="X_4" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(-0.7, 0.004, 0)
-scale = Vector3(0.012, 0.004, 4.38178)
 mesh = SubResource("cube")
+
+[node name="X_4" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=2067540975]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 4.38178, -0.7, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_4" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, -0.7)
-scale = Vector3(4.38178, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_4" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=1966003381]
+transform = Transform3D(4.38178, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, -0.7)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="X_5" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(-0.35, 0.004, 0)
-scale = Vector3(0.012, 0.004, 4.54643)
 mesh = SubResource("cube")
+
+[node name="X_5" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=919218333]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 4.54643, -0.35, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_5" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, -0.35)
-scale = Vector3(4.54643, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_5" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=1485315029]
+transform = Transform3D(4.54643, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, -0.35)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="X_6" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0.0, 0.004, 0)
-scale = Vector3(0.012, 0.004, 4.60000)
 mesh = SubResource("cube")
+
+[node name="X_6" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=2115398384]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 4.6, 0, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_6" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, 0.0)
-scale = Vector3(4.60000, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_6" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=176780512]
+transform = Transform3D(4.6, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="X_7" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0.35, 0.004, 0)
-scale = Vector3(0.012, 0.004, 4.54643)
 mesh = SubResource("cube")
+
+[node name="X_7" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=1583647768]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 4.54643, 0.35, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_7" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, 0.35)
-scale = Vector3(4.54643, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_7" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=921861877]
+transform = Transform3D(4.54643, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, 0.35)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="X_8" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0.7, 0.004, 0)
-scale = Vector3(0.012, 0.004, 4.38178)
 mesh = SubResource("cube")
+
+[node name="X_8" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=1377064689]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 4.38178, 0.7, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_8" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, 0.7)
-scale = Vector3(4.38178, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_8" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=2057722873]
+transform = Transform3D(4.38178, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, 0.7)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="X_9" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(1.0499999999999998, 0.004, 0)
-scale = Vector3(0.012, 0.004, 4.09268)
 mesh = SubResource("cube")
+
+[node name="X_9" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=584919517]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 4.09268, 1.05, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_9" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, 1.0499999999999998)
-scale = Vector3(4.09268, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_9" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=1701878728]
+transform = Transform3D(4.09268, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, 1.05)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="X_10" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(1.4, 0.004, 0)
-scale = Vector3(0.012, 0.004, 3.64966)
 mesh = SubResource("cube")
+
+[node name="X_10" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=961284493]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 3.64966, 1.4, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_10" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, 1.4)
-scale = Vector3(3.64966, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_10" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=705211155]
+transform = Transform3D(3.64966, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, 1.4)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="X_11" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(1.75, 0.004, 0)
-scale = Vector3(0.012, 0.004, 2.98496)
 mesh = SubResource("cube")
+
+[node name="X_11" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=100690551]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 2.98496, 1.75, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_11" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, 1.75)
-scale = Vector3(2.98496, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_11" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=408745233]
+transform = Transform3D(2.98496, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, 1.75)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="X_12" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(2.0999999999999996, 0.004, 0)
-scale = Vector3(0.012, 0.004, 1.87617)
 mesh = SubResource("cube")
+
+[node name="X_12" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=1217355574]
+transform = Transform3D(0.012, 0, 0, 0, 0.004, 0, 0, 0, 1.87617, 2.1, 0.004, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="Z_12" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.004, 2.0999999999999996)
-scale = Vector3(1.87617, 0.004, 0.012)
 mesh = SubResource("cube")
+
+[node name="Z_12" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=310920031]
+transform = Transform3D(1.87617, 0, 0, 0, 0.004, 0, 0, 0, 0.012, 0, 0.004, 2.1)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="DiagonalA" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.005, 0)
-rotation_degrees = Vector3(0, 45, 0)
-scale = Vector3(0.018, 0.004, 4.6)
 mesh = SubResource("cube")
+
+[node name="DiagonalA" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=823197884]
+transform = Transform3D(0.012727921, 0, 3.252691, 0, 0.004, 0, -0.012727921, 0, 3.252691, 0, 0.005, 0)
 material_override = SubResource("black")
 cast_shadow = 0
-
-[node name="DiagonalB" type="MeshInstance3D" parent="BoardPivot/Grid"]
-position = Vector3(0, 0.005, 0)
-rotation_degrees = Vector3(0, -45, 0)
-scale = Vector3(0.018, 0.004, 4.6)
 mesh = SubResource("cube")
+
+[node name="DiagonalB" type="MeshInstance3D" parent="BoardPivot/Grid" unique_id=655903245]
+transform = Transform3D(0.012727921, 0, -3.252691, 0, 0.004, 0, 0.012727921, 0, 3.252691, 0, 0.005, 0)
 material_override = SubResource("black")
 cast_shadow = 0
+mesh = SubResource("cube")
 
-[node name="Beaver" type="Node3D" parent="."]
-position = Vector3(0, 0, -3.34)
+[node name="Izba" parent="." instance=ExtResource("izba")]
+
+[node name="Beaver" type="Node3D" parent="." unique_id=483244909]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -4.19)
 script = ExtResource("beaver")
 
-[node name="Model" parent="Beaver" instance=ExtResource("beaver_model")]
-position = Vector3(0, -0.138, 0)
-scale = Vector3(2.2, 2.2, 2.2)
+[node name="Model" parent="Beaver" unique_id=1089378943 instance=ExtResource("beaver_model")]
+position = Vector3(0, 0.84283, 0)
+scale = Vector3(3.3, 3.3, 3.3)
 
-[node name="Voice" type="AudioStreamPlayer" parent="Beaver"]
+[node name="Voice" type="AudioStreamPlayer" parent="Beaver" unique_id=1789224376]
 volume_db = -4.0
 script = ExtResource("beaver_voice")
 
-[node name="AimArrow" type="MeshInstance3D" parent="."]
+[node name="AimArrow" type="MeshInstance3D" parent="." unique_id=1095451360]
 visible = false
-cast_shadow = 0
 material_override = SubResource("arrow_material")
+cast_shadow = 0
 mesh = SubResource("arrow_plane")
 
-[node name="PreviewPieces" type="Node3D" parent="."]
+[node name="StartingPieces" type="Node3D" parent="." unique_id=541764881]
 
-[node name="Light1" parent="PreviewPieces" instance=ExtResource("light_piece")]
-position = Vector3(-1.40, 0.07, 1.65)
+[node name="Light1" parent="StartingPieces" unique_id=1578577605 instance=ExtResource("light_piece")]
+position = Vector3(0, 0.07, 0.48)
 
-[node name="Light2" parent="PreviewPieces" instance=ExtResource("light_piece")]
-position = Vector3(-1.00, 0.07, 1.65)
+[node name="Light2" parent="StartingPieces" unique_id=803648796 instance=ExtResource("light_piece")]
+position = Vector3(-0.425557, 0.07, 0.585728)
 
-[node name="Light3" parent="PreviewPieces" instance=ExtResource("light_piece")]
-position = Vector3(-0.60, 0.07, 1.65)
+[node name="Light3" parent="StartingPieces" unique_id=120958290 instance=ExtResource("light_piece")]
+position = Vector3(0.425557, 0.07, 0.585728)
 
-[node name="Light4" parent="PreviewPieces" instance=ExtResource("light_piece")]
-position = Vector3(-0.20, 0.07, 1.65)
+[node name="Light4" parent="StartingPieces" unique_id=136854607 instance=ExtResource("light_piece")]
+position = Vector3(0, 0.07, 0.968)
 
-[node name="Light5" parent="PreviewPieces" instance=ExtResource("light_piece")]
-position = Vector3(0.20, 0.07, 1.65)
+[node name="Light5" parent="StartingPieces" unique_id=801119656 instance=ExtResource("light_piece")]
+position = Vector3(-0.712396, 0.07, 0.980529)
 
-[node name="Light6" parent="PreviewPieces" instance=ExtResource("light_piece")]
-position = Vector3(0.60, 0.07, 1.65)
+[node name="Light6" parent="StartingPieces" unique_id=1040629581 instance=ExtResource("light_piece")]
+position = Vector3(0.712396, 0.07, 0.980529)
 
-[node name="Light7" parent="PreviewPieces" instance=ExtResource("light_piece")]
-position = Vector3(1.00, 0.07, 1.65)
+[node name="Light7" parent="StartingPieces" unique_id=1716039907 instance=ExtResource("light_piece")]
+position = Vector3(0, 0.07, 1.456)
 
-[node name="Light8" parent="PreviewPieces" instance=ExtResource("light_piece")]
-position = Vector3(1.40, 0.07, 1.65)
+[node name="Light8" parent="StartingPieces" unique_id=273828949 instance=ExtResource("light_piece")]
+position = Vector3(-0.999235, 0.07, 1.375329)
 
-[node name="Dark1" parent="PreviewPieces" instance=ExtResource("dark_piece")]
-position = Vector3(-1.40, 0.07, -1.65)
+[node name="Light9" parent="StartingPieces" instance=ExtResource("light_piece")]
+position = Vector3(0.999235, 0.07, 1.375329)
 
-[node name="Dark2" parent="PreviewPieces" instance=ExtResource("dark_piece")]
-position = Vector3(-1.00, 0.07, -1.65)
+[node name="Light10" parent="StartingPieces" instance=ExtResource("light_piece")]
+position = Vector3(0, 0.07, 1.944)
 
-[node name="Dark3" parent="PreviewPieces" instance=ExtResource("dark_piece")]
-position = Vector3(-0.60, 0.07, -1.65)
+[node name="Light11" parent="StartingPieces" instance=ExtResource("light_piece")]
+position = Vector3(-1.286074, 0.07, 1.770129)
 
-[node name="Dark4" parent="PreviewPieces" instance=ExtResource("dark_piece")]
-position = Vector3(-0.20, 0.07, -1.65)
+[node name="Light12" parent="StartingPieces" instance=ExtResource("light_piece")]
+position = Vector3(1.286074, 0.07, 1.770129)
 
-[node name="Dark5" parent="PreviewPieces" instance=ExtResource("dark_piece")]
-position = Vector3(0.20, 0.07, -1.65)
+[node name="Dark1" parent="StartingPieces" unique_id=1199599517 instance=ExtResource("dark_piece")]
+position = Vector3(-0.282137, 0.07, -0.388328)
 
-[node name="Dark6" parent="PreviewPieces" instance=ExtResource("dark_piece")]
-position = Vector3(0.60, 0.07, -1.65)
+[node name="Dark2" parent="StartingPieces" unique_id=1626839063 instance=ExtResource("dark_piece")]
+position = Vector3(0.282137, 0.07, -0.388328)
 
-[node name="Dark7" parent="PreviewPieces" instance=ExtResource("dark_piece")]
-position = Vector3(1.00, 0.07, -1.65)
+[node name="Dark3" parent="StartingPieces" unique_id=1082614127 instance=ExtResource("dark_piece")]
+position = Vector3(0, 0.07, -0.724)
 
-[node name="Dark8" parent="PreviewPieces" instance=ExtResource("dark_piece")]
-position = Vector3(1.40, 0.07, -1.65)
+[node name="Dark4" parent="StartingPieces" unique_id=739730318 instance=ExtResource("dark_piece")]
+position = Vector3(-0.568976, 0.07, -0.783128)
+
+[node name="Dark5" parent="StartingPieces" unique_id=463709575 instance=ExtResource("dark_piece")]
+position = Vector3(0.568976, 0.07, -0.783128)
+
+[node name="Dark6" parent="StartingPieces" unique_id=2096834641 instance=ExtResource("dark_piece")]
+position = Vector3(0, 0.07, -1.212)
+
+[node name="Dark7" parent="StartingPieces" unique_id=772035665 instance=ExtResource("dark_piece")]
+position = Vector3(-0.855815, 0.07, -1.177929)
+
+[node name="Dark8" parent="StartingPieces" unique_id=1099193513 instance=ExtResource("dark_piece")]
+position = Vector3(0.855815, 0.07, -1.177929)
+
+[node name="Dark9" parent="StartingPieces" instance=ExtResource("dark_piece")]
+position = Vector3(0, 0.07, -1.7)
+
+[node name="Dark10" parent="StartingPieces" instance=ExtResource("dark_piece")]
+position = Vector3(-1.142655, 0.07, -1.572729)
+
+[node name="Dark11" parent="StartingPieces" instance=ExtResource("dark_piece")]
+position = Vector3(1.142655, 0.07, -1.572729)
+
+[node name="Dark12" parent="StartingPieces" instance=ExtResource("dark_piece")]
+position = Vector3(0, 0.07, -2.188)

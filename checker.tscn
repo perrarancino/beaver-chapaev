@@ -1,7 +1,6 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://checker.gd" id="script"]
-[ext_resource type="ArrayMesh" path="res://checker.obj" id="checker_mesh"]
 
 [sub_resource type="CylinderShape3D" id="shape"]
 radius = 0.155
@@ -10,6 +9,30 @@ height = 0.135
 [sub_resource type="PhysicsMaterial" id="wood_contact"]
 friction = 0.12
 bounce = 0.18
+
+[sub_resource type="CylinderMesh" id="insert_body"]
+top_radius = 0.124
+bottom_radius = 0.124
+height = 0.1
+radial_segments = 64
+
+[sub_resource type="StandardMaterial3D" id="bronze"]
+albedo_color = Color(0.49, 0.33, 0.17, 1)
+metallic = 0.32
+roughness = 0.45
+
+[sub_resource type="CylinderMesh" id="insert_trim"]
+material = SubResource("bronze")
+top_radius = 0.111
+bottom_radius = 0.116
+height = 0.004
+radial_segments = 64
+
+[sub_resource type="CylinderMesh" id="insert_face"]
+top_radius = 0.105
+bottom_radius = 0.109
+height = 0.004
+radial_segments = 64
 
 [node name="Checker" type="RigidBody3D"]
 axis_lock_linear_y = true
@@ -26,5 +49,25 @@ script = ExtResource("script")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="."]
 shape = SubResource("shape")
 
-[node name="CarvedWood" type="MeshInstance3D" parent="."]
-mesh = ExtResource("checker_mesh")
+[node name="Visual" type="Node3D" parent="."]
+
+[node name="OuterRim" type="MeshInstance3D" parent="Visual"]
+transform = Transform3D(15.5, 0, 0, 0, 0, -15.5, 0, 15.5, 0, 0, -0.008, 0)
+layers = 3
+
+[node name="InnerInsert" type="Node3D" parent="Visual"]
+position = Vector3(0, 0.042, 0)
+
+[node name="Body" type="MeshInstance3D" parent="Visual/InnerInsert"]
+position = Vector3(0, -0.052, 0)
+layers = 3
+mesh = SubResource("insert_body")
+
+[node name="Trim" type="MeshInstance3D" parent="Visual/InnerInsert"]
+layers = 3
+mesh = SubResource("insert_trim")
+
+[node name="Face" type="MeshInstance3D" parent="Visual/InnerInsert"]
+position = Vector3(0, 0.004, 0)
+layers = 3
+mesh = SubResource("insert_face")

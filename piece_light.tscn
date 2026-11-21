@@ -1,12 +1,32 @@
-[gd_scene load_steps=3 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="PackedScene" path="res://checker.tscn" id="checker"]
+[ext_resource type="ArrayMesh" path="res://assets/checkers/light_rim.res" id="rim"]
+[ext_resource type="Texture2D" path="res://assets/checkers/light_rim_albedo.webp" id="albedo"]
+[ext_resource type="Texture2D" path="res://assets/checkers/rim_normal.webp" id="normal"]
 
 [sub_resource type="StandardMaterial3D" id="wood"]
-albedo_color = Color(0.68, 0.43, 0.22, 1)
-roughness = 0.42
+albedo_texture = ExtResource("albedo")
+roughness = 0.46
+normal_enabled = true
+normal_texture = ExtResource("normal")
+
+[sub_resource type="StandardMaterial3D" id="insert_body"]
+albedo_color = Color(0.64, 0.51, 0.34, 1)
+roughness = 0.62
+
+[sub_resource type="StandardMaterial3D" id="insert_face"]
+albedo_color = Color(0.82, 0.74, 0.58, 1)
+roughness = 0.5
 
 [node name="Checker" instance=ExtResource("checker")]
 
-[node name="CarvedWood" parent="." index="1"]
+[node name="OuterRim" parent="Visual" index="0"]
 material_override = SubResource("wood")
+mesh = ExtResource("rim")
+
+[node name="Body" parent="Visual/InnerInsert" index="0"]
+material_override = SubResource("insert_body")
+
+[node name="Face" parent="Visual/InnerInsert" index="2"]
+material_override = SubResource("insert_face")

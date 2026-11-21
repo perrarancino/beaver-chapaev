@@ -1,8 +1,8 @@
 extends Node3D
 
+const Beaver := preload("res://beaver.gd")
 const LIGHT_PIECE := preload("res://piece_light.tscn")
 const DARK_PIECE := preload("res://piece_dark.tscn")
-const COUNT := 8
 const BOARD_RADIUS := 2.35
 const FLOOR_Y := -2.1
 const SHOT_IMPULSE := 3.0
@@ -10,6 +10,7 @@ const DRAG_DEAD_ZONE := 12.0
 const MAX_PULL_STRENGTH := 2.8
 const AIM_LIFT := 0.09
 var pieces: Array[Checker] = []
+var starting_sides: Dictionary[Vector3, int] = {}
 var selected: Checker
 var aiming := false
 var drag_start := Vector2.ZERO
@@ -31,7 +32,7 @@ var rng := RandomNumberGenerator.new()
 var orbiting := false
 var board_angle := 0.0
 var rotation_proxies: Dictionary[Checker, Node3D] = {}
-@onready var beaver = $Beaver
+@onready var beaver: Beaver = $Beaver
 @onready var beaver_voice = $Beaver/Voice
 @onready var aim_arrow: MeshInstance3D = $AimArrow
 @onready var aim_material := aim_arrow.material_override as ShaderMaterial
@@ -39,11 +40,14 @@ var rotation_proxies: Dictionary[Checker, Node3D] = {}
 func _ready() -> void:
  rng.randomize()
  camera = $Camera3D
- $PreviewPieces.queue_free()
  _build_ui()
  beaver_voice.subtitle_changed.connect(_set_beaver_subtitle)
  get_window().focus_exited.connect(_cancel_aim)
- _new_round()
+ for piece: Checker in $StartingPieces.get_children():
+  starting_sides[piece.position] = piece.side
+  piece.reparent(self)
+  pieces.append(piece)
+ _update_ui()
 
 func _material(color: Color, roughness := 0.8, metallic := 0.0) -> StandardMaterial3D:
  var m := StandardMaterial3D.new()
@@ -115,10 +119,8 @@ func _new_round() -> void:
   if is_instance_valid(p): p.queue_free()
  pieces.clear()
  _cancel_aim()
- for side in range(2):
-  for i in range(COUNT):
-   var start := Vector3(-1.4 + i * 0.4, Checker.REST_Y, 1.65 if side == 0 else -1.65)
-   _make_piece(side, start.rotated(Vector3.UP, board_angle))
+ for start in starting_sides:
+  _make_piece(starting_sides[start], start.rotated(Vector3.UP, board_angle))
  turn = 0
  phase = "aim"
  _update_ui()
@@ -127,7 +129,7 @@ func _make_piece(side: int, pos: Vector3) -> void:
  var scene := LIGHT_PIECE if side == 0 else DARK_PIECE
  var body := scene.instantiate() as Checker
  body.position = pos
- body.side = side
+ body.rotation.y = board_angle
  add_child(body)
  pieces.append(body)
 
@@ -207,7 +209,7 @@ func _begin_board_rotation() -> void:
   var proxy := Node3D.new()
   $BoardPivot.add_child(proxy)
   proxy.global_transform = piece.global_transform
-  proxy.add_child(piece.get_node("CarvedWood").duplicate())
+  proxy.add_child(piece.get_node("Visual").duplicate())
   piece.visible = false
   rotation_proxies[piece] = proxy
 
@@ -320,42 +322,62 @@ func _finish_shot() -> void:
  phase = "aim"
  _update_ui()
  if turn == 1:
-  await get_tree().create_timer(0.9).timeout
+  await get_tree().create_timer(0.38).timeout
   if phase == "aim" and turn == 1: _bot_shoot()
 
 func _bot_shoot() -> void:
  var mine: Array[Checker] = []
  var enemies: Array[Checker] = []
  for p in pieces:
-  if not is_instance_valid(p) or p.is_queued_for_deletion(): continue
+  if not is_instance_valid(p) or p.is_queued_for_deletion() or p.falling: continue
   if p.side == 1: mine.append(p)
   else: enemies.append(p)
  if mine.is_empty() or enemies.is_empty():
   _finish_shot()
   return
- var best: Checker = mine[0]
- var target: Checker = enemies[0]
- var best_distance := INF
- for a in mine:
-  for b in enemies:
-   var distance := a.position.distance_to(b.position) + rng.randf_range(0, 0.4)
-   if distance < best_distance:
-    best_distance = distance
-    best = a
-    target = b
- var direction := target.position - best.position
- direction.y = 0
- if direction.is_zero_approx(): direction = Vector3.BACK
- direction = direction.normalized().rotated(Vector3.UP, rng.randf_range(-0.08, 0.08))
+ var best: Checker
+ var best_setup: Beaver.ShotSetup
+ var direction := Vector3.ZERO
+ var best_score := INF
+ for piece in mine:
+  for enemy in enemies:
+   var shot := enemy.global_position - piece.global_position
+   shot.y = 0
+   var setup := beaver.shot_setup(piece.global_position, shot.normalized())
+   if setup == null: continue
+   var cost := setup.cost + shot.length() * 0.30 + rng.randf_range(0.0, 0.16)
+   if cost < best_score:
+    best_score = cost
+    best_setup = setup
+    best = piece
+    direction = shot.normalized()
+ if best == null:
+  # Reposition a checker toward the center when there's no reachable shot at an opponent.
+  for piece in mine:
+   var inward := -Vector3(piece.position.x, 0.0, piece.position.z).normalized()
+   if inward.is_zero_approx(): inward = Vector3.BACK
+   var shot := global_basis * inward
+   var setup := beaver.shot_setup(piece.global_position, shot)
+   if setup != null and setup.cost < best_score:
+    best_score = setup.cost
+    best_setup = setup
+    best = piece
+    direction = shot
+ if best == null:
+  _finish_shot()
+  return
  phase = "windup"
  _update_ui()
- beaver_voice.say_turn()
- await beaver.wind_up(best.global_position, direction)
+ await beaver.wait_for_stance()
+ await beaver_voice.say_turn()
  if is_instance_valid(best) and not best.is_queued_for_deletion():
-  await beaver.strike(best.global_position, direction)
-  if is_instance_valid(best) and not best.is_queued_for_deletion():
-   _shoot(best, direction, rng.randf_range(1.8, 2.5))
-   beaver.recover(direction)
-   return
- await beaver.recover()
- _bot_shoot()
+  var ready := await beaver.wind_up(best.global_position, direction, best_setup)
+  if ready and is_instance_valid(best) and not best.is_queued_for_deletion():
+   var hit := await beaver.strike(best.global_position, direction)
+   if hit and is_instance_valid(best) and not best.is_queued_for_deletion():
+    _shoot(best, direction, rng.randf_range(1.8, 2.5))
+    beaver.recover(direction)
+    return
+  if ready:
+   await beaver.recover()
+ _finish_shot()

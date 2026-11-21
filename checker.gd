@@ -2,10 +2,9 @@ class_name Checker
 extends RigidBody3D
 
 const RADIUS := 0.155
-const REST_Y := 0.07
 const SLIDING_DECELERATION := 2.0
 
-var side := 0
+@export_enum("Light", "Dark") var side: int = 0
 var falling := false
 
 
