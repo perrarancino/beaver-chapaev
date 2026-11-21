@@ -23,10 +23,13 @@ void eyelid(vec2 pixel, vec2 center, vec2 axis, vec2 uv_dx, vec2 uv_dy,
 	if (mask <= 0.0) {
 		return;
 	}
-	float edge = mix(17.0, -16.5, eye_closure) - local.x * local.x * 0.005;
-	float covered = mask * smoothstep(edge - 1.3, edge + 1.0, local.y);
+	float edge = mix(35.0, -16.5, eye_closure) - local.x * local.x * 0.005;
+	float sweep = smoothstep(edge - 1.3, edge + 1.0, local.y);
+	float seal = smoothstep(0.82, 1.0, eye_closure);
+	float covered = mask * mix(sweep, 1.0, seal);
 	if (covered > 0.0) {
-		float skin_height = 36.0 + max(0.0, local.y - edge) * 0.12;
+		// The blink moves the coverage edge, while the eyelid texture stays in the same UVs.
+		float skin_height = 36.0 + (local.y + 32.0) * 0.12;
 		vec2 lid_uv = (center + axis * local.x + up * skin_height) / ATLAS_SIZE;
 		color = mix(color, textureGrad(albedo_texture, lid_uv, uv_dx, uv_dy).rgb * 0.91, covered);
 		normal = mix(normal, vec3(0.5, 0.5, 1.0), covered);

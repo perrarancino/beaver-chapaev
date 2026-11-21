@@ -39,7 +39,6 @@ var _waist: int
 var _waist_rest_inverse: Transform3D
 var _face: ShaderMaterial
 var _jaw: int
-var _eyelids: int
 var _next_blink := 1.35
 var _blink := 0.0
 var _mouth := 0.0
@@ -79,7 +78,6 @@ func _ready() -> void:
 		_face.set_shader_parameter("normal_strength", 0.55)
 	_body.material_override = _face
 	_jaw = _body.find_blend_shape_by_name(&"JawOpen")
-	_eyelids = _body.find_blend_shape_by_name(&"Blink")
 	_hips = _rig.find_bone("Hips")
 	_waist = _rig.find_bone("Spine1")
 	_waist_rest_inverse = _rig.get_bone_global_rest(_waist).affine_inverse()
@@ -128,7 +126,6 @@ func _animate_face(delta: float) -> void:
 	if closure != _blink:
 		_blink = closure
 		_face.set_shader_parameter("eye_closure", closure)
-		_body.set_blend_shape_value(_eyelids, closure)
 	var mouth := lerpf(_mouth, _voice.mouth_opening(), 1.0 - exp(-delta * 27.0))
 	if mouth < 0.001:
 		mouth = 0.0
