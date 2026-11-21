@@ -41,6 +41,7 @@ var _face: ShaderMaterial
 var _jaw: int
 var _eyelids: int
 var _next_blink := 1.35
+var _blink := 0.0
 var _mouth := 0.0
 var _hand_frames: Array[Basis] = []
 var _fingertips: Array[Vector3] = []
@@ -74,6 +75,8 @@ func _ready() -> void:
 	_rig = _model.get_node("Rig/Skeleton3D")
 	_body = _rig.get_node("Body")
 	_face = material.duplicate() as ShaderMaterial
+	if OS.has_feature("web"):
+		_face.set_shader_parameter("normal_strength", 0.55)
 	_body.material_override = _face
 	_jaw = _body.find_blend_shape_by_name(&"JawOpen")
 	_eyelids = _body.find_blend_shape_by_name(&"Blink")
@@ -122,11 +125,17 @@ func _animate_face(delta: float) -> void:
 	var closure := smoothstep(0.0, 0.067, blink_time) * (1.0 - smoothstep(0.091, 0.19, blink_time))
 	if blink_time >= 0.19:
 		_next_blink = _clock + randf_range(2.0, 4.6)
-	_face.set_shader_parameter("eye_closure", closure)
-	_body.set_blend_shape_value(_eyelids, closure)
-	_mouth = lerpf(_mouth, _voice.mouth_opening(), 1.0 - exp(-delta * 27.0))
-	_face.set_shader_parameter("jaw_open", _mouth)
-	_body.set_blend_shape_value(_jaw, _mouth)
+	if closure != _blink:
+		_blink = closure
+		_face.set_shader_parameter("eye_closure", closure)
+		_body.set_blend_shape_value(_eyelids, closure)
+	var mouth := lerpf(_mouth, _voice.mouth_opening(), 1.0 - exp(-delta * 27.0))
+	if mouth < 0.001:
+		mouth = 0.0
+	if mouth != _mouth:
+		_mouth = mouth
+		_face.set_shader_parameter("jaw_open", mouth)
+		_body.set_blend_shape_value(_jaw, mouth)
 
 
 func shot_setup(checker: Vector3, direction: Vector3) -> ShotSetup:
