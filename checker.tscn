@@ -35,6 +35,7 @@ height = 0.004
 radial_segments = 64
 
 [node name="Checker" type="RigidBody3D"]
+max_contacts_reported = 32
 axis_lock_linear_y = true
 axis_lock_angular_x = true
 axis_lock_angular_z = true
