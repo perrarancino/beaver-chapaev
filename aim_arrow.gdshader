@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode unshaded, cull_disabled, depth_draw_never, shadows_disabled, fog_disabled;
+render_mode unshaded, cull_disabled, depth_test_disabled, depth_draw_never, shadows_disabled, fog_disabled;
 
 uniform float arrow_length = 1.0;
 uniform vec4 edge_color : source_color = vec4(0.035, 0.18, 0.20, 1.0);
@@ -15,9 +15,9 @@ void vertex() {
 void fragment() {
 	vec2 point = vec2(local_point.x, (local_point.y + 0.5) * arrow_length);
 	float tip = arrow_length - 0.026;
-	float head_length = 0.25;
+	float head_length = min(0.25, arrow_length * 0.56);
 	float head_base = tip - head_length;
-	float head_width = 0.116;
+	float head_width = min(0.116, arrow_length * 0.33);
 	float shaft_width = mix(0.019, 0.035, smoothstep(0.0, head_base, point.y));
 	float shaft = max(abs(point.x) - shaft_width, max(0.026 - point.y, point.y - head_base - 0.024));
 	float head_side = (abs(point.x) * head_length - (tip - point.y) * head_width)

@@ -4,11 +4,11 @@
 
 [sub_resource type="CylinderShape3D" id="shape"]
 radius = 0.155
-height = 0.135
+height = 0.136
 
 [sub_resource type="PhysicsMaterial" id="wood_contact"]
-friction = 0.12
-bounce = 0.18
+friction = 0.24
+bounce = 0.10
 
 [sub_resource type="CylinderMesh" id="insert_body"]
 top_radius = 0.124
@@ -35,14 +35,12 @@ height = 0.004
 radial_segments = 64
 
 [node name="Checker" type="RigidBody3D"]
-axis_lock_linear_y = true
-axis_lock_angular_x = true
-axis_lock_angular_z = true
 physics_material_override = SubResource("wood_contact")
-gravity_scale = 0.0
+continuous_cd = true
 linear_damp_mode = 1
-linear_damp = 0.40
-angular_damp = 3.0
+linear_damp = 0.10
+angular_damp_mode = 1
+angular_damp = 0.85
 sleeping = true
 script = ExtResource("script")
 
