@@ -1,6 +1,7 @@
 class_name Checker
 extends RigidBody3D
 
+const HIT_FX := preload("res://assets/FX/hitFX_base/hirFX_base.tscn")
 const RADIUS := 0.155
 const HALF_HEIGHT := 0.068
 const SURFACE_LAYER := 4
@@ -71,6 +72,7 @@ const ICON_TEXTURES := {
 @export_enum("Light", "Dark") var side: int = 0
 @export var icon: Icon = Icon.NONE
 var falling := false
+var touching: Dictionary[int, bool] = {}
 var floor_time := 0.0
 var slot := -1
 var hit_source: Checker
@@ -89,7 +91,7 @@ func _ready() -> void:
 		disc_shape = _make_disc_shape()
 	$CollisionShape3D.shape = disc_shape
 	contact_monitor = true
-	max_contacts_reported = 12
+	max_contacts_reported = 32
 	body_entered.connect(_report_contact)
 	contact_material = physics_material_override.duplicate() as PhysicsMaterial
 	physics_material_override = contact_material
@@ -211,10 +213,49 @@ func shot_multiplier() -> float:
 
 
 func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
+	if not falling:
+		_update_hit_contacts(state)
 	if stays_on_board() and not falling:
 		# The two magical discs have no contact with the wooden surface.
 		state.linear_velocity = state.linear_velocity.move_toward(
 			Vector3.ZERO, NORMAL_FRICTION * 9.8 * state.step)
+
+
+func _update_hit_contacts(state: PhysicsDirectBodyState3D) -> void:
+	if state.get_contact_count() == 0:
+		touching.clear()
+		return
+	var current: Dictionary[int, bool] = {}
+	for index in state.get_contact_count():
+		var other := state.get_contact_collider_object(index) as Checker
+		# Only one of the two bodies handles their shared contact.
+		if other == null or other.falling or get_instance_id() >= other.get_instance_id():
+			continue
+		var id := other.get_instance_id()
+		if not touching.has(id) and not current.has(id):
+			_play_hit_fx.call_deferred(state.get_contact_collider_position(index))
+		current[id] = true
+	touching = current
+
+
+func _play_hit_fx(world_point: Vector3) -> void:
+	var parent := get_parent_node_3d()
+	if parent == null or is_queued_for_deletion():
+		return
+	var fx := HIT_FX.instantiate() as Node3D
+	fx.position = parent.to_local(world_point)
+	fx.scale = Vector3.ONE * RADIUS
+	parent.add_child(fx)
+	var tail := 0.0
+	for child in fx.get_children():
+		if child is GPUParticles3D:
+			child.local_coords = true
+			tail = maxf(tail, child.lifetime / child.speed_scale)
+	var player := fx.get_node("AnimationPlayer") as AnimationPlayer
+	player.play(&"hitFX_base")
+	var cleanup := fx.create_tween()
+	cleanup.tween_interval(player.current_animation_length + tail)
+	cleanup.tween_callback(fx.queue_free)
 
 
 func leave_board() -> void:

@@ -1,0 +1,27 @@
+[gd_resource type="VisualShader" format=3 uid="uid://cwjyn4qx31abc"]
+
+[sub_resource type="VisualShaderNodeInput" id="VisualShaderNodeInput_04pdw"]
+expanded_output_ports = [0]
+input_name = "color"
+
+[sub_resource type="VisualShaderNodeTexture2DParameter" id="VisualShaderNodeTexture2DParameter_4gpeg"]
+parameter_name = "hitFX_baseTexture"
+
+[sub_resource type="VisualShaderNodeTexture" id="VisualShaderNodeTexture_cve6w"]
+expanded_output_ports = [0]
+source = 5
+
+[sub_resource type="VisualShaderNodeFloatOp" id="VisualShaderNodeFloatOp_xvr8g"]
+operator = 2
+
+[resource]
+flags/unshaded = true
+nodes/fragment/2/node = SubResource("VisualShaderNodeInput_04pdw")
+nodes/fragment/2/position = Vector2(-690, 230)
+nodes/fragment/3/node = SubResource("VisualShaderNodeTexture2DParameter_4gpeg")
+nodes/fragment/3/position = Vector2(-1030, 540)
+nodes/fragment/4/node = SubResource("VisualShaderNodeTexture_cve6w")
+nodes/fragment/4/position = Vector2(-600, 520)
+nodes/fragment/5/node = SubResource("VisualShaderNodeFloatOp_xvr8g")
+nodes/fragment/5/position = Vector2(-220, 480)
+nodes/fragment/connections = PackedInt32Array(3, 0, 4, 2, 2, 4, 5, 1, 4, 1, 5, 0, 2, 0, 0, 0, 5, 0, 0, 1)
