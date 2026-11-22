@@ -13,7 +13,6 @@ const TURN_REST_TIME := 0.35
 const CAMERA_SCROLL_STEP := 0.125
 const CAMERA_SCROLL_SPEED := 11.0
 const BOARD_CAMERA_POSITION := Vector3(0.0, 4.35, 4.45)
-const WEB_RENDER_PIXEL_BUDGET := 1280.0 * 720.0
 const GHOST_LANDING_SPEED := 1.25
 const SHOT_IMPULSE := 3.0
 const DRAG_DEAD_ZONE := 12.0
@@ -31,6 +30,7 @@ var enemy_setup: Array[Checker.Icon] = []
 var run := Run.new()
 var enemy_turns := 0
 var defeated: Array[Dictionary] = []
+var shot_knockouts: Array[bool] = [false, false]
 var contacts: Array[Array] = []
 var soft_contacts: Dictionary = {}
 var links: Array[Dictionary] = []
@@ -86,8 +86,6 @@ func _ready() -> void:
 		Vector3(0.0, BOARD_TOP, 0.0))
 	_weather_board()
 	if OS.has_feature("web"):
-		get_viewport().size_changed.connect(_limit_web_render_resolution)
-		_limit_web_render_resolution()
 		# The room still receives shadows from the board, pieces and beaver.
 		for mesh: MeshInstance3D in $Izba.find_children("*", "MeshInstance3D", true, false):
 			mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -103,12 +101,6 @@ func _ready() -> void:
 			enemy_setup.append(piece.icon)
 		piece.queue_free()
 	_start_run()
-
-func _limit_web_render_resolution() -> void:
-	var viewport := get_viewport()
-	var size := get_window().size
-	var pixels := maxf(size.x * size.y, 1.0)
-	viewport.scaling_3d_scale = minf(1.0, sqrt(WEB_RENDER_PIXEL_BUDGET / pixels))
 
 func _weather_board() -> void:
 	var board := get_node("BoardPivot/Board/Three-player chessboard") as MeshInstance3D
@@ -161,8 +153,9 @@ func _build_ui() -> void:
 	beaver_subtitle.offset_left = -210
 	beaver_subtitle.offset_right = 210
 	beaver_subtitle.offset_top = 72
-	beaver_subtitle.offset_bottom = 106
+	beaver_subtitle.offset_bottom = 124
 	beaver_subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	beaver_subtitle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	beaver_subtitle.add_theme_color_override("font_shadow_color", Color(0.02, 0.015, 0.013, 0.9))
 	beaver_subtitle.add_theme_constant_override("shadow_offset_y", 2)
 	hint = _label(root, PLAY_HINT, 16, Color("eed9b8"))
@@ -619,6 +612,7 @@ func _shoot(piece: Checker, direction: Vector3, strength: float, offset := Vecto
 
 func _begin_shot_resolution() -> void:
 	phase = "moving"
+	shot_knockouts.fill(false)
 	turn_durations_applied = false
 	_reset_stillness()
 	_update_ui()
@@ -906,6 +900,9 @@ func _keep_on_board(piece: Checker) -> void:
 func _eliminate(piece: Checker) -> void:
 	piece.fuse_origin = piece.global_position
 	piece.leave_board()
+	if not shot_knockouts[piece.side]:
+		shot_knockouts[piece.side] = true
+		beaver_voice.react_to_knockout(piece.side == 1)
 	defeated.append({"side": piece.side, "icon": piece.icon, "slot": piece.slot, "used": piece.exploded})
 	var source := piece.hit_source
 	if is_instance_valid(source) and not source.falling and source.side != piece.side and source.icon == Checker.Icon.VAMPIRE:
@@ -1088,19 +1085,20 @@ func _finish_shot() -> void:
 	if counts[0] == 0 or counts[1] == 0:
 		phase = "round_end"
 		run.finish_round()
+		var result_cue: StringName
 		if counts[0] == 0 and counts[1] == 0:
 			status.text = "НИЧЬЯ!"
-			beaver_voice.say(&"draw")
+			result_cue = &"draw"
 		elif counts[1] == 0:
 			run.wins += 1
 			status.text = "ТЫ ПОБЕДИЛ!"
-			beaver_voice.say(&"lose")
+			result_cue = &"lose"
 		else:
 			status.text = "БОБЁР ПОБЕДИЛ"
-			beaver_voice.say(&"win")
+			result_cue = &"win"
 		_update_ui()
 		hint.text = ""
-		await get_tree().create_timer(1.7).timeout
+		await beaver_voice.speak(result_cue)
 		_offer_next_round(counts[0], counts[1])
 		return
 	turn = 1 - turn
@@ -1173,7 +1171,7 @@ func _bot_shoot() -> void:
 	phase = "windup"
 	_update_ui()
 	await beaver.wait_for_stance()
-	await beaver_voice.say_turn()
+	await beaver_voice.speak(&"aim")
 	if is_instance_valid(best) and not best.is_queued_for_deletion():
 		var ready := await beaver.wind_up(best.global_position, direction, best_setup)
 		if ready and is_instance_valid(best) and not best.is_queued_for_deletion():

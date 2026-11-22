@@ -61,7 +61,9 @@ var _busy := false
 func _ready() -> void:
 	_model = $Model
 	var material := BEAVER_MATERIAL
-	_is_blue = not Engine.is_editor_hint() and randi_range(0, 1) == 1
+	if not Engine.is_editor_hint():
+		_is_blue = randi_range(0, 1) == 1
+		_voice.select_opponent(_is_blue)
 	if _is_blue:
 		var blue := BLUE_BEAVER_MODEL.instantiate() as Node3D
 		blue.transform = _model.transform
