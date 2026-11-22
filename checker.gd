@@ -1,10 +1,10 @@
 class_name Checker
-extends RigidBody3D
+extends Node3D
 
-const HIT_FX := preload("res://assets/FX/hitFX_base/hirFX_base.tscn")
 const RADIUS := 0.155
 const HALF_HEIGHT := 0.068
-const SURFACE_LAYER := 4
+const PIXELS_PER_UNIT := 100.0
+const SLIDE_GRAVITY := 9.8
 const NORMAL_FRICTION := 0.24
 const ICE_FRICTION := 0.070
 const NORMAL_DAMP := 0.10
@@ -72,7 +72,6 @@ const ICON_TEXTURES := {
 @export_enum("Light", "Dark") var side: int = 0
 @export var icon: Icon = Icon.NONE
 var falling := false
-var touching: Dictionary[int, bool] = {}
 var floor_time := 0.0
 var slot := -1
 var hit_source: Checker
@@ -82,50 +81,71 @@ var exploded := false
 var fuse_origin := Vector3.ZERO
 var lightning_used := false
 var sticky_used := false
-var contact_material: PhysicsMaterial
-static var disc_shape: ConvexPolygonShape3D
+var fall_velocity := Vector3.ZERO
+@onready var planar_body: RigidBody2D = $PlanarBody
+@onready var contact_material: PhysicsMaterial = planar_body.physics_material_override
+var mass: float:
+	get: return planar_body.mass
+var linear_velocity: Vector3:
+	get: return from_plane(planar_body.linear_velocity)
+	set(value): planar_body.linear_velocity = to_plane(value)
 
 
 func _ready() -> void:
-	if disc_shape == null:
-		disc_shape = _make_disc_shape()
-	$CollisionShape3D.shape = disc_shape
-	contact_monitor = true
-	max_contacts_reported = 32
-	body_entered.connect(_report_contact)
-	contact_material = physics_material_override.duplicate() as PhysicsMaterial
-	physics_material_override = contact_material
+	place_on_board(global_position, global_rotation.y)
+	planar_body.body_entered.connect(_report_contact)
 	set_icon(icon)
-	sleeping = true
 
 
-static func _make_disc_shape() -> ConvexPolygonShape3D:
-	const BEVEL := 0.010
-	const SIDES := 32
-	var points := PackedVector3Array()
-	# Flat faces support the checker; the bevel lets it roll over the rim cleanly.
-	for y in [-HALF_HEIGHT, -HALF_HEIGHT + BEVEL, HALF_HEIGHT - BEVEL, HALF_HEIGHT]:
-		var radius := RADIUS - BEVEL if is_equal_approx(absf(y), HALF_HEIGHT) else RADIUS
-		for i in SIDES:
-			var angle := TAU * i / SIDES
-			points.append(Vector3(cos(angle) * radius, y, sin(angle) * radius))
-	var hull := ConvexPolygonShape3D.new()
-	hull.margin = 0.006
-	hull.points = points
-	return hull
+static func to_plane(vector: Vector3) -> Vector2:
+	return Vector2(vector.x, vector.z) * PIXELS_PER_UNIT
+
+
+static func from_plane(vector: Vector2, height := 0.0) -> Vector3:
+	return Vector3(vector.x / PIXELS_PER_UNIT, height, vector.y / PIXELS_PER_UNIT)
+
+
+func place_on_board(point: Vector3, yaw: float) -> void:
+	global_position = point
+	global_rotation = Vector3(0.0, yaw, 0.0)
+	planar_body.position = to_plane(point)
+	# Positive 2D rotation maps to negative yaw on the XZ plane.
+	planar_body.rotation = -yaw
+
+
+func sync_planar_position() -> void:
+	global_position = from_plane(planar_body.position, global_position.y)
+	global_rotation = Vector3(0.0, -planar_body.rotation, 0.0)
+
+
+func apply_slide_friction(delta: float) -> void:
+	if planar_body.sleeping:
+		return
+	var friction := ICE_FRICTION if icon == Icon.SNOWFLAKE else NORMAL_FRICTION
+	planar_body.linear_velocity = planar_body.linear_velocity.move_toward(
+		Vector2.ZERO, friction * SLIDE_GRAVITY * PIXELS_PER_UNIT * delta)
+
+
+func apply_planar_impulse(velocity: Vector3, offset: Vector3) -> void:
+	var planar_velocity := to_plane(velocity)
+	planar_body.sleeping = false
+	planar_body.linear_velocity += planar_velocity
+	if not offset.is_zero_approx():
+		planar_body.apply_torque_impulse(to_plane(offset).cross(planar_velocity) * mass)
+
+
+func stop_motion() -> void:
+	planar_body.linear_velocity = Vector2.ZERO
+	planar_body.angular_velocity = 0.0
+	planar_body.sleeping = true
 
 
 func set_icon(value: Icon) -> void:
 	icon = value
-	var planar := stays_on_board()
-	collision_layer = 2 if icon == Icon.GHOST else 1
-	collision_mask = 0 if icon == Icon.GHOST else (1 if planar else 1 | SURFACE_LAYER)
-	axis_lock_linear_y = planar
-	axis_lock_angular_x = planar
-	axis_lock_angular_z = planar
-	gravity_scale = 0.0 if planar else 1.0
-	mass = ARMORED_MASS if icon == Icon.ARMORED else 1.0
-	linear_damp = 0.04 if icon == Icon.SNOWFLAKE else NORMAL_DAMP
+	planar_body.collision_layer = 0 if icon == Icon.GHOST else 1
+	planar_body.collision_mask = 0 if icon == Icon.GHOST else 1
+	planar_body.mass = ARMORED_MASS if icon == Icon.ARMORED else 1.0
+	planar_body.linear_damp = 0.04 if icon == Icon.SNOWFLAKE else NORMAL_DAMP
 	contact_material.friction = ICE_FRICTION if icon == Icon.SNOWFLAKE else NORMAL_FRICTION
 	contact_material.bounce = RUBBER_BOUNCE if icon == Icon.RUBBER else NORMAL_BOUNCE
 	var old_emblem := $Visual.get_node_or_null("Emblem")
@@ -182,7 +202,7 @@ func set_icon(value: Icon) -> void:
 
 
 func _report_contact(body: Node) -> void:
-	var other := body as Checker
+	var other := body.get_parent() as Checker
 	if other:
 		struck.emit(other)
 
@@ -197,12 +217,8 @@ func stays_on_board() -> bool:
 
 
 func is_in_motion() -> bool:
-	if sleeping:
-		return false
-	# Ignore small movements from the contact solver while a flat disc is at rest.
-	var tipping := global_basis.y.dot(Vector3.UP) < 0.985 and angular_velocity.length_squared() > 0.36
-	return linear_velocity.slide(Vector3.UP).length_squared() > 0.0025 \
-		or absf(linear_velocity.y) > 0.16 or absf(angular_velocity.y) > 0.6 or tipping
+	return not planar_body.sleeping and (linear_velocity.length_squared() > 0.0025
+		or absf(planar_body.angular_velocity) > 0.6)
 
 
 func shot_multiplier() -> float:
@@ -212,54 +228,23 @@ func shot_multiplier() -> float:
 		_: return 1.0
 
 
-func _integrate_forces(state: PhysicsDirectBodyState3D) -> void:
-	if not falling:
-		_update_hit_contacts(state)
-	if stays_on_board() and not falling:
-		# The two magical discs have no contact with the wooden surface.
-		state.linear_velocity = state.linear_velocity.move_toward(
-			Vector3.ZERO, NORMAL_FRICTION * 9.8 * state.step)
-
-
-func _update_hit_contacts(state: PhysicsDirectBodyState3D) -> void:
-	if state.get_contact_count() == 0:
-		touching.clear()
-		return
-	var current: Dictionary[int, bool] = {}
-	for index in state.get_contact_count():
-		var other := state.get_contact_collider_object(index) as Checker
-		# Only one of the two bodies handles their shared contact.
-		if other == null or other.falling or get_instance_id() >= other.get_instance_id():
-			continue
-		var id := other.get_instance_id()
-		if not touching.has(id) and not current.has(id):
-			_play_hit_fx.call_deferred(state.get_contact_collider_position(index))
-		current[id] = true
-	touching = current
-
-
-func _play_hit_fx(world_point: Vector3) -> void:
-	var parent := get_parent_node_3d()
-	if parent == null or is_queued_for_deletion():
-		return
-	var fx := HIT_FX.instantiate() as Node3D
-	fx.position = parent.to_local(world_point)
-	fx.scale = Vector3.ONE * RADIUS
-	parent.add_child(fx)
-	var tail := 0.0
-	for child in fx.get_children():
-		if child is GPUParticles3D:
-			child.local_coords = true
-			tail = maxf(tail, child.lifetime / child.speed_scale)
-	var player := fx.get_node("AnimationPlayer") as AnimationPlayer
-	player.play(&"hitFX_base")
-	var cleanup := fx.create_tween()
-	cleanup.tween_interval(player.current_animation_length + tail)
-	cleanup.tween_callback(fx.queue_free)
-
-
 func leave_board() -> void:
 	falling = true
-	collision_layer = 0
-	collision_mask = SURFACE_LAYER
-	sleeping = false
+	fall_velocity = linear_velocity
+	stop_motion()
+	planar_body.freeze = true
+	planar_body.collision_layer = 0
+	planar_body.collision_mask = 0
+
+
+func animate_fall(delta: float, floor_y: float) -> void:
+	if floor_time > 0.0:
+		floor_time += delta
+		return
+	fall_velocity.y -= SLIDE_GRAVITY * delta
+	var point := global_position + fall_velocity * delta
+	var floor_height := floor_y + HALF_HEIGHT
+	point.y = maxf(point.y, floor_height)
+	global_position = point
+	if point.y <= floor_height:
+		floor_time = delta

@@ -1,6 +1,14 @@
 shader_type spatial;
 render_mode unshaded, cull_disabled, depth_draw_never;
 
+#if CURRENT_RENDERER == RENDERER_COMPATIBILITY
+const int FLAME_LAYERS = 3;
+const int FLAME_SPARKS = 4;
+#else
+const int FLAME_LAYERS = 9;
+const int FLAME_SPARKS = 9;
+#endif
+
 float hash(vec3 p) {
 	p = fract(p * vec3(0.1031, 0.1137, 0.1379));
 	p += dot(p, p.yzx + 19.19);
@@ -37,7 +45,7 @@ vec3 flame_color(float heat) {
 
 float sparks(vec2 p, float clock, float pixel_width) {
 	float result = 0.0;
-	for (int index = 0; index < 9; index++) {
+	for (int index = 0; index < FLAME_SPARKS; index++) {
 		float id = float(index);
 		float age = fract(clock * (0.30 + 0.29 * hash(vec3(id, 0.5, 4.3))) + hash(vec3(id, 5.0, 1.0)));
 		float lifetime = smoothstep(0.05, 0.20, age) * (1.0 - smoothstep(0.55, 0.98, age));
@@ -66,8 +74,8 @@ void fragment() {
 	float transmission = 1.0;
 
 	// Integrate emission through a small stack of turbulent flame layers.
-	for (int layer = 0; layer < 9; layer++) {
-		float depth = 0.60 - float(layer) * 0.15;
+	for (int layer = 0; layer < FLAME_LAYERS; layer++) {
+		float depth = 0.60 - float(layer) * (1.20 / float(FLAME_LAYERS - 1));
 		vec3 drift = vec3(p.x * 3.0, p.y * 6.1 - clock * 3.6, depth * 3.1);
 		float curl = noise(drift);
 		float detail = noise(drift * 2.14 + vec3(10.2, 1.7, 3.4));
@@ -80,7 +88,7 @@ void fragment() {
 		float density = smoothstep(0.10, 0.80, field + (detail - 0.5) * 0.29)
 			* ignition * mix(0.58, 1.12, filament);
 		float heat = clamp(0.25 + 0.54 * field + 0.30 * curl + 0.24 * filament - 0.34 * p.y, 0.0, 1.0);
-		float layer_alpha = 1.0 - exp(-density * 0.70);
+		float layer_alpha = 1.0 - exp(-density * (6.3 / float(FLAME_LAYERS)));
 		light += transmission * layer_alpha * flame_color(heat);
 		transmission *= 1.0 - layer_alpha;
 	}

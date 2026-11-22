@@ -4,19 +4,21 @@ const Beaver := preload("res://beaver.gd")
 const Run := preload("res://checker_run.gd")
 const LIGHT_PIECE := preload("res://piece_light.tscn")
 const DARK_PIECE := preload("res://piece_dark.tscn")
+const HIT_FX := preload("res://assets/FX/hitFX_base/hirFX_base.tscn")
 const BOARD_APOTHEM := 2.143
-const BOARD_DEPTH := 0.132
 const BOARD_TOP := 0.003
 const FLOOR_Y := -2.1
 const PIECE_Y := 0.07
 const TURN_REST_TIME := 0.35
-const CAMERA_TRANSITION_TIME := 0.65
-const PLAYER_CAMERA_POSITION := Vector3(0.0, 4.35, 4.45)
+const CAMERA_SCROLL_STEP := 0.125
+const CAMERA_SCROLL_SPEED := 11.0
+const BOARD_CAMERA_POSITION := Vector3(0.0, 4.35, 4.45)
+const WEB_RENDER_PIXEL_BUDGET := 1280.0 * 720.0
 const GHOST_LANDING_SPEED := 1.25
 const SHOT_IMPULSE := 3.0
 const DRAG_DEAD_ZONE := 12.0
 const MAX_PULL_STRENGTH := 2.8
-const PLAY_HINT := "ЛКМ — потяни шашку для удара или край стола для поворота"
+const PLAY_HINT := "ЛКМ — потяни шашку или край стола  •  Колёсико — ракурс"
 const EDGE_NORMALS := [
 	Vector3(1, 0, 0), Vector3(0.5, 0, 0.8660254), Vector3(-0.5, 0, 0.8660254),
 	Vector3(-1, 0, 0), Vector3(-0.5, 0, -0.8660254), Vector3(0.5, 0, -0.8660254),
@@ -46,8 +48,9 @@ var turn_durations_applied := false
 var ghost_landings: Dictionary[Checker, Vector3] = {}
 var camera: Camera3D
 var beaver_camera_transform: Transform3D
-var player_camera_transform: Transform3D
-var camera_tween: Tween
+var board_camera_transform: Transform3D
+var camera_view := 0.0
+var camera_view_target := 0.0
 var status: Label
 var score: Label
 var hint: Label
@@ -79,11 +82,15 @@ func _ready() -> void:
 	rng.randomize()
 	camera = $Camera3D
 	beaver_camera_transform = camera.transform
-	player_camera_transform = Transform3D(Basis.IDENTITY, PLAYER_CAMERA_POSITION).looking_at(
+	board_camera_transform = Transform3D(Basis.IDENTITY, BOARD_CAMERA_POSITION).looking_at(
 		Vector3(0.0, BOARD_TOP, 0.0))
-	camera.transform = player_camera_transform
 	_weather_board()
-	_build_play_surfaces()
+	if OS.has_feature("web"):
+		get_viewport().size_changed.connect(_limit_web_render_resolution)
+		_limit_web_render_resolution()
+		# The room still receives shadows from the board, pieces and beaver.
+		for mesh: MeshInstance3D in $Izba.find_children("*", "MeshInstance3D", true, false):
+			mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_build_ui()
 	_build_preview()
 	beaver_voice.subtitle_changed.connect(_set_beaver_subtitle)
@@ -97,6 +104,12 @@ func _ready() -> void:
 		piece.queue_free()
 	_start_run()
 
+func _limit_web_render_resolution() -> void:
+	var viewport := get_viewport()
+	var size := get_window().size
+	var pixels := maxf(size.x * size.y, 1.0)
+	viewport.scaling_3d_scale = minf(1.0, sqrt(WEB_RENDER_PIXEL_BUDGET / pixels))
+
 func _weather_board() -> void:
 	var board := get_node("BoardPivot/Board/Three-player chessboard") as MeshInstance3D
 	var worn_texture := preload("res://assets/boards/board_worn.webp")
@@ -108,46 +121,6 @@ func _weather_board() -> void:
 		else:
 			finish.clearcoat = 0.42
 		board.set_surface_override_material(surface, finish)
-
-func _build_play_surfaces() -> void:
-	var wood := PhysicsMaterial.new()
-	wood.friction = 0.34
-	var pivot: Node3D = $BoardPivot
-	var points := PackedVector3Array()
-	var radius := BOARD_APOTHEM / cos(PI / 6.0)
-	for i in 6:
-		var angle := PI / 6.0 + TAU * i / 6.0
-		var corner := Vector3(cos(angle) * radius, 0.0, sin(angle) * radius)
-		points.append(corner)
-		points.append(corner - Vector3.UP * BOARD_DEPTH)
-	var deck := ConvexPolygonShape3D.new()
-	deck.points = points
-	deck.margin = 0.006
-	_add_play_surface(pivot, &"BoardCollision", deck, Vector3.ZERO, wood)
-
-	var table: MeshInstance3D = $BoardPivot/Table
-	var tabletop := table.mesh as CylinderMesh
-	var support := CylinderShape3D.new()
-	support.radius = tabletop.top_radius
-	support.height = tabletop.height
-	_add_play_surface(pivot, &"TableCollision", support, table.position, wood)
-
-	var floor_shape := WorldBoundaryShape3D.new()
-	floor_shape.plane = Plane(Vector3.UP, FLOOR_Y)
-	_add_play_surface(self, &"FloorCollision", floor_shape, Vector3.ZERO, wood)
-
-func _add_play_surface(parent: Node3D, body_name: StringName, shape: Shape3D,
-		location: Vector3, material: PhysicsMaterial) -> void:
-	var surface := StaticBody3D.new()
-	surface.name = body_name
-	surface.position = location
-	surface.collision_layer = Checker.SURFACE_LAYER
-	surface.collision_mask = 0
-	surface.physics_material_override = material
-	var collider := CollisionShape3D.new()
-	collider.shape = shape
-	surface.add_child(collider)
-	parent.add_child(surface)
 
 func _material(color: Color, roughness := 0.8, metallic := 0.0) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
@@ -296,13 +269,15 @@ func _set_beaver_subtitle(text: String) -> void:
 	beaver_subtitle.text = "" if text.is_empty() else "«%s»" % text
 
 
-func _move_camera(target: Transform3D) -> void:
-	if camera_tween:
-		camera_tween.kill()
-	if camera.transform.is_equal_approx(target):
+func _update_camera(delta: float) -> void:
+	if camera_view == camera_view_target:
 		return
-	camera_tween = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	camera_tween.tween_property(camera, "transform", target, CAMERA_TRANSITION_TIME)
+	camera_view = lerpf(camera_view, camera_view_target, 1.0 - exp(-CAMERA_SCROLL_SPEED * delta))
+	if is_equal_approx(camera_view, camera_view_target):
+		camera_view = camera_view_target
+	camera.transform = beaver_camera_transform.interpolate_with(board_camera_transform, camera_view)
+	if aiming:
+		_draw_aim(_aim_vector(get_viewport().get_mouse_position()))
 
 
 func _new_round() -> void:
@@ -327,7 +302,6 @@ func _new_round() -> void:
 	enemy_turns = 2
 	turn = 0
 	phase = "aim"
-	_move_camera(player_camera_transform)
 	hint.text = PLAY_HINT
 	run_overlay.hide()
 	_update_ui()
@@ -343,8 +317,8 @@ func _make_piece(side: int, icon: Checker.Icon, pos: Vector3, slot: int) -> Chec
 	body.struck.connect(_queue_contact.bind(body))
 	for other in pieces:
 		if icon == Checker.Icon.ARMORED and other.icon == Checker.Icon.ARMORED:
-			body.add_collision_exception_with(other)
-			other.add_collision_exception_with(body)
+			body.planar_body.add_collision_exception_with(other.planar_body)
+			other.planar_body.add_collision_exception_with(body.planar_body)
 	pieces.append(body)
 	return body
 
@@ -367,6 +341,14 @@ func _input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _unhandled_input(event: InputEvent) -> void:
+	if (event is InputEventMouseButton and event.pressed
+			and event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]):
+		var direction := 1.0 if event.button_index == MOUSE_BUTTON_WHEEL_UP else -1.0
+		var steps: float = event.factor if event.factor > 0.0 else 1.0
+		camera_view_target = clampf(camera_view_target + direction * steps * CAMERA_SCROLL_STEP, 0.0, 1.0)
+		piece_tooltip.hide()
+		get_viewport().set_input_as_handled()
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed and orbiting:
 		_finish_board_rotation()
 		return
@@ -403,8 +385,30 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _piece_hit(cursor: Vector2) -> Dictionary:
 	var origin := camera.project_ray_origin(cursor)
-	var query := PhysicsRayQueryParameters3D.create(origin, origin + camera.project_ray_normal(cursor) * 100, 3)
-	return get_world_3d().direct_space_state.intersect_ray(query)
+	var ray := camera.project_ray_normal(cursor)
+	var top: Variant = Plane(Vector3.UP, PIECE_Y + Checker.HALF_HEIGHT).intersects_ray(origin, ray)
+	var bottom: Variant = Plane(Vector3.UP, PIECE_Y - Checker.HALF_HEIGHT).intersects_ray(origin, ray)
+	if top == null or bottom == null:
+		return {}
+	# Test the part of the mouse ray between the two flat faces of a checker.
+	var from := Checker.to_plane(top)
+	var to := Checker.to_plane(bottom)
+	var radius := Checker.RADIUS * Checker.PIXELS_PER_UNIT
+	var nearest := INF
+	var picked: Checker
+	for piece in pieces:
+		if piece.falling:
+			continue
+		var center := Checker.to_plane(piece.global_position)
+		if from.distance_squared_to(center) <= radius * radius:
+			return {"collider": piece, "position": top}
+		var entry := Geometry2D.segment_intersects_circle(from, to, center, radius)
+		if entry >= 0.0 and entry < nearest:
+			nearest = entry
+			picked = piece
+	if picked:
+		return {"collider": picked, "position": (top as Vector3).lerp(bottom, nearest)}
+	return {}
 
 func _show_piece_info(piece: Checker, cursor: Vector2) -> void:
 	piece_tooltip.visible = is_instance_valid(piece)
@@ -481,7 +485,7 @@ func _edge_distance(start: Vector3, direction: Vector3, margin := 0.015) -> floa
 
 func _slide_distance(speed: float) -> float:
 	var drag := Checker.NORMAL_DAMP
-	var friction := Checker.NORMAL_FRICTION * float(ProjectSettings.get_setting("physics/3d/default_gravity"))
+	var friction := Checker.NORMAL_FRICTION * Checker.SLIDE_GRAVITY
 	return speed / drag - friction / (drag * drag) * log(1.0 + drag * speed / friction)
 
 func _draw_trajectory(piece: Checker, shot: Vector3) -> void:
@@ -546,7 +550,7 @@ func _draw_line(mesh: ImmediateMesh, start: Vector3, end: Vector3, width: float)
 func _begin_board_rotation() -> void:
 	orbiting = true
 	for piece in pieces:
-		piece.freeze = true
+		piece.planar_body.freeze = true
 		var proxy := Node3D.new()
 		$BoardPivot.add_child(proxy)
 		proxy.global_transform = piece.global_transform
@@ -558,11 +562,10 @@ func _finish_board_rotation() -> void:
 	orbiting = false
 	for piece in rotation_proxies:
 		var proxy := rotation_proxies[piece]
-		piece.global_transform = proxy.global_transform
-		piece.reset_physics_interpolation()
+		piece.place_on_board(proxy.global_position, proxy.global_rotation.y)
 		piece.visible = true
-		piece.freeze = false
-		piece.sleeping = true
+		piece.planar_body.freeze = false
+		piece.stop_motion()
 		proxy.queue_free()
 	rotation_proxies.clear()
 
@@ -645,6 +648,7 @@ func _resolve_contacts() -> void:
 		var key := _pair_id(a, b)
 		if not processed.has(key):
 			_touch(a, b, _on_board(a.global_position).direction_to(_on_board(b.global_position)))
+			_play_hit_fx(a.global_position.lerp(b.global_position, 0.5))
 			processed[key] = true
 	contacts.clear()
 	var overlaps := {}
@@ -657,8 +661,6 @@ func _resolve_contacts() -> void:
 			var ghost := a.icon == Checker.Icon.GHOST or b.icon == Checker.Icon.GHOST
 			var armor := a.icon == Checker.Icon.ARMORED and b.icon == Checker.Icon.ARMORED
 			if not ghost and not armor: continue
-			if absf(b.global_position.y - a.global_position.y) > Checker.HALF_HEIGHT * 2.0:
-				continue
 			var offset := _on_board(b.global_position) - _on_board(a.global_position)
 			if offset.length_squared() >= DIAMETER * DIAMETER or offset.is_zero_approx():
 				continue
@@ -673,6 +675,22 @@ func _resolve_contacts() -> void:
 				_armor_contact(a, b, normal, penetration)
 	soft_contacts = overlaps
 
+func _play_hit_fx(world_point: Vector3) -> void:
+	var fx := HIT_FX.instantiate() as Node3D
+	fx.position = to_local(world_point)
+	fx.scale = Vector3.ONE * Checker.RADIUS
+	add_child(fx)
+	var tail := 0.0
+	for child in fx.get_children():
+		if child is GPUParticles3D:
+			child.local_coords = true
+			tail = maxf(tail, child.lifetime / child.speed_scale)
+	var player := fx.get_node("AnimationPlayer") as AnimationPlayer
+	player.play(&"hitFX_base")
+	var cleanup := fx.create_tween()
+	cleanup.tween_interval(player.current_animation_length + tail)
+	cleanup.tween_callback(fx.queue_free)
+
 func _source(piece: Checker) -> Checker:
 	return piece.hit_source if is_instance_valid(piece.hit_source) else piece
 
@@ -680,8 +698,7 @@ func _push(piece: Checker, velocity: Vector3, source: Checker, offset := Vector3
 	if piece.falling or velocity.length_squared() < 0.0001:
 		return
 	piece.hit_source = source
-	piece.sleeping = false
-	piece.apply_impulse(velocity * piece.mass, offset)
+	piece.apply_planar_impulse(velocity, offset)
 
 func _touch(a: Checker, b: Checker, normal: Vector3) -> void:
 	var a_speed := a.incoming_velocity.dot(normal)
@@ -710,14 +727,14 @@ func _armor_contact(a: Checker, b: Checker, normal: Vector3, penetration: float)
 	var a_forward := a.linear_velocity.dot(normal)
 	var b_forward := -b.linear_velocity.dot(normal)
 	var closing := a_forward + b_forward
-	a.global_position -= normal * penetration * 0.5
-	b.global_position += normal * penetration * 0.5
+	a.place_on_board(a.global_position - normal * penetration * 0.5, a.global_rotation.y)
+	b.place_on_board(b.global_position + normal * penetration * 0.5, b.global_rotation.y)
 	if closing <= 0.025:
 		return
 	# Equal and opposite impulses keep a pair of armored discs moving along the hit.
 	var attacker := a if a_forward >= b_forward else b
 	var defender := b if attacker == a else a
-	var forward := attacker.linear_velocity.slide(Vector3.UP).normalized()
+	var forward := attacker.linear_velocity.normalized()
 	var approach := (attacker.linear_velocity - defender.linear_velocity).dot(forward)
 	var transfer := forward * maxf(minf(approach, closing), 0.0) * 0.52
 	var source := _source(attacker)
@@ -744,17 +761,17 @@ func _stick_pieces(a: Checker, b: Checker) -> void:
 			return
 	a.sticky_used = true
 	b.sticky_used = true
-	var joint := PinJoint3D.new()
+	var joint := PinJoint2D.new()
 	add_child(joint)
-	joint.global_position = (a.global_position + b.global_position) * 0.5
-	joint.node_a = joint.get_path_to(a)
-	joint.node_b = joint.get_path_to(b)
-	a.sleeping = false
-	b.sleeping = false
+	joint.global_position = (a.planar_body.position + b.planar_body.position) * 0.5
+	joint.node_a = joint.get_path_to(a.planar_body)
+	joint.node_b = joint.get_path_to(b.planar_body)
+	a.planar_body.sleeping = false
+	b.planar_body.sleeping = false
 	links.append({"bodies": [a, b], "joint": joint, "time": 1.15})
 
 func _release_link(index: int) -> void:
-	var joint: PinJoint3D = links[index].joint
+	var joint: PinJoint2D = links[index].joint
 	joint.node_a = NodePath()
 	joint.node_b = NodePath()
 	joint.queue_free()
@@ -828,6 +845,7 @@ func _find_lightning_target(origin: Vector3, seen: Array) -> Checker:
 	return available[rng.randi_range(0, mini(available.size(), 4) - 1)]
 
 func _process(delta: float) -> void:
+	_update_camera(delta)
 	var armed: Array[Checker] = []
 	if phase == "moving":
 		for p in pieces:
@@ -882,7 +900,7 @@ func _keep_on_board(piece: Checker) -> void:
 				point -= normal * overshoot
 				if velocity.dot(normal) > 0.0:
 					velocity = velocity.bounce(normal) * 0.72
-	piece.global_position = $BoardPivot.to_global(point)
+	piece.place_on_board($BoardPivot.to_global(point), piece.global_rotation.y)
 	piece.linear_velocity = velocity.rotated(Vector3.UP, board_angle)
 
 func _eliminate(piece: Checker) -> void:
@@ -931,6 +949,10 @@ func _spot_is_clear(point: Vector3, ignore: Checker) -> bool:
 
 func _physics_process(delta: float) -> void:
 	if phase != "moving": return
+	for p in pieces:
+		if not p.falling:
+			p.sync_planar_position()
+			p.apply_slide_friction(delta)
 	_resolve_contacts()
 	var pending := _tick_effects(delta)
 	var landing := _tick_ghost_landings(delta)
@@ -940,13 +962,12 @@ func _physics_process(delta: float) -> void:
 		var p := pieces[i]
 		if not p.falling:
 			if p.stays_on_board():
-				if _edge_distance(p.global_position, p.global_position.slide(Vector3.UP).normalized(), Checker.RADIUS) <= 0.0:
+				if _is_off_board(p.global_position, Checker.RADIUS):
 					_keep_on_board(p)
-			elif p.global_position.y < -Checker.HALF_HEIGHT:
+			elif _is_off_board(p.global_position):
 				_eliminate(p)
 		if p.falling:
-			if p.position.y <= FLOOR_Y + Checker.RADIUS + 0.015 or p.floor_time > 0.0:
-				p.floor_time += delta
+			p.animate_fall(delta, FLOOR_Y)
 			if p.floor_time >= 0.22 and p.fuse < 0.0:
 				pieces.remove_at(i)
 				p.queue_free()
@@ -978,7 +999,7 @@ func _rest_poses_are_stable() -> bool:
 			continue
 		var rest_pose := rest_poses[p]
 		var drift := pose.origin - rest_pose.origin
-		if drift.slide(Vector3.UP).length_squared() > 0.006 * 0.006 or absf(drift.y) > 0.012:
+		if drift.length_squared() > 0.006 * 0.006:
 			return false
 		var angle := pose.basis.get_rotation_quaternion().angle_to(rest_pose.basis.get_rotation_quaternion())
 		if absf(angle) > deg_to_rad(3.0):
@@ -1038,9 +1059,10 @@ func _tick_ghost_landings(delta: float) -> bool:
 	if ghost_landings.is_empty():
 		return false
 	# These discs stay non-solid until they have reached their landing positions.
-	for piece in ghost_landings.keys():
+	for piece: Checker in ghost_landings.keys():
 		var destination := ghost_landings[piece]
-		piece.global_position = piece.global_position.move_toward(destination, GHOST_LANDING_SPEED * delta)
+		var point := piece.global_position.move_toward(destination, GHOST_LANDING_SPEED * delta)
+		piece.place_on_board(point, piece.global_rotation.y)
 		if not piece.global_position.is_equal_approx(destination):
 			continue
 		ghost_landings.erase(piece)
@@ -1054,18 +1076,17 @@ func _tick_ghost_landings(delta: float) -> bool:
 
 func _materialize_ghost(piece: Checker) -> void:
 	piece.set_icon(Checker.Icon.NONE)
-	piece.sleeping = false
+	piece.planar_body.sleeping = false
 
 func _finish_shot() -> void:
 	contacts.clear()
 	soft_contacts.clear()
 	var counts := [0, 0]
 	for p in pieces:
-		p.sleeping = true
+		p.stop_motion()
 		counts[p.side] += 1
 	if counts[0] == 0 or counts[1] == 0:
 		phase = "round_end"
-		_move_camera(beaver_camera_transform)
 		run.finish_round()
 		if counts[0] == 0 and counts[1] == 0:
 			status.text = "НИЧЬЯ!"
@@ -1084,7 +1105,6 @@ func _finish_shot() -> void:
 		return
 	turn = 1 - turn
 	phase = "aim"
-	_move_camera(player_camera_transform if turn == 0 else beaver_camera_transform)
 	_update_ui()
 	if turn == 1:
 		await get_tree().create_timer(0.38).timeout

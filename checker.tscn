@@ -2,11 +2,11 @@
 
 [ext_resource type="Script" path="res://checker.gd" id="script"]
 
-[sub_resource type="CylinderShape3D" id="shape"]
-radius = 0.155
-height = 0.136
+[sub_resource type="CircleShape2D" id="shape"]
+radius = 15.5
 
 [sub_resource type="PhysicsMaterial" id="wood_contact"]
+resource_local_to_scene = true
 friction = 0.24
 bounce = 0.10
 
@@ -34,17 +34,22 @@ bottom_radius = 0.109
 height = 0.004
 radial_segments = 64
 
-[node name="Checker" type="RigidBody3D"]
+[node name="Checker" type="Node3D"]
+script = ExtResource("script")
+
+[node name="PlanarBody" type="RigidBody2D" parent="."]
 physics_material_override = SubResource("wood_contact")
-continuous_cd = true
+gravity_scale = 0.0
+continuous_cd = 2
+contact_monitor = true
+max_contacts_reported = 8
 linear_damp_mode = 1
 linear_damp = 0.10
 angular_damp_mode = 1
 angular_damp = 0.85
 sleeping = true
-script = ExtResource("script")
 
-[node name="CollisionShape3D" type="CollisionShape3D" parent="."]
+[node name="CollisionShape2D" type="CollisionShape2D" parent="PlanarBody"]
 shape = SubResource("shape")
 
 [node name="Visual" type="Node3D" parent="."]
