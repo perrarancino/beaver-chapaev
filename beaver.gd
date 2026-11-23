@@ -6,6 +6,7 @@ signal returned_to_stance
 const BEAVER_MATERIAL := preload("res://assets/beaver/beaver_material.tres")
 const BLUE_BEAVER_MODEL := preload("res://assets/beaver/blue/beaver.glb")
 const BLUE_BEAVER_MATERIAL := preload("res://assets/beaver/blue/beaver_material.tres")
+const EYE_SHADER := preload("res://assets/beaver/beaver_eye.gdshader")
 const IDLE_PAW_DIRECTION := Vector3(0, -0.985, 0.173)
 const STANCE_RADIUS := 4.19
 const SHOULDER_OFFSET := 1.31
@@ -24,6 +25,8 @@ enum Joint { UPPER, LOWER, END, FINGERTIP }
 
 @onready var _voice = $Voice
 
+var addressing_player := false
+
 var _model: Node3D
 var _rig: Skeleton3D
 var _body: MeshInstance3D
@@ -39,8 +42,12 @@ var _waist: int
 var _waist_rest_inverse: Transform3D
 var _face: ShaderMaterial
 var _jaw: int
+var _jaw_rest_rotation: Quaternion
+var _jaw_axis: Vector3
+var _eyes: Array[MeshInstance3D] = []
+var _eye_gaze := Vector2.ZERO
+var _cursor_head_turn := Vector2.ZERO
 var _next_blink := 1.35
-var _blink := 0.0
 var _mouth := 0.0
 var _hand_frames: Array[Basis] = []
 var _fingertips: Array[Vector3] = []
@@ -79,7 +86,9 @@ func _ready() -> void:
 	if OS.has_feature("web"):
 		_face.set_shader_parameter("normal_strength", 0.55)
 	_body.material_override = _face
-	_jaw = _body.find_blend_shape_by_name(&"JawOpen")
+	_jaw = _rig.find_bone("Jaw")
+	_jaw_rest_rotation = _rig.get_bone_rest(_jaw).basis.get_rotation_quaternion()
+	_jaw_axis = (_rig.get_bone_global_rest(_jaw).basis.inverse() * Vector3.RIGHT).normalized()
 	_hips = _rig.find_bone("Hips")
 	_waist = _rig.find_bone("Spine1")
 	_waist_rest_inverse = _rig.get_bone_global_rest(_waist).affine_inverse()
@@ -87,6 +96,7 @@ func _ready() -> void:
 	_stance = Vector3(0.0, -_home.z, 0.0)
 	_spine = _rig.find_bone("Spine")
 	_head = _rig.find_bone("Head")
+	_setup_eyes()
 	for side in ["Right", "Left"]:
 		var leg := PackedInt32Array([
 			_rig.find_bone(side + "UpLeg"),
@@ -115,26 +125,82 @@ func _process(delta: float) -> void:
 	if Engine.is_editor_hint():
 		return
 	_clock += delta
-	_animate_face(delta)
+	var eyes_center := (_eyes[0].global_position + _eyes[1].global_position) * 0.5
+	var target := _cursor_target(get_viewport().get_camera_3d(), eyes_center)
+	var look := (global_basis.inverse() * (target - eyes_center)).normalized()
+	var turn := Vector2(look.x, look.y).limit_length(1.0) if look.z > 0.0 else Vector2.ZERO
+	_cursor_head_turn = _cursor_head_turn.lerp(turn, 1.0 - exp(-delta * 4.5))
 	if not _busy:
 		_rest()
+	_animate_face(delta, target)
 
 
-func _animate_face(delta: float) -> void:
+func _setup_eyes() -> void:
+	var fur_centers := [Vector2(1208, 844), Vector2(1363, 852)]
+	var atlas_axes := [Vector2(0.78, -0.63), Vector2(0.65, 0.76)]
+	if _is_blue:
+		fur_centers = [Vector2(591, 544), Vector2(598, 906)]
+		atlas_axes = [Vector2(-0.52, 0.85), Vector2(0.52, 0.85)]
+	var names: Array[StringName] = [&"LeftEye", &"RightEye"]
+	for i in names.size():
+		var eye := _model.find_child(names[i], true, false) as MeshInstance3D
+		var axis: Vector2 = atlas_axes[i].normalized()
+		var material := ShaderMaterial.new()
+		material.shader = EYE_SHADER
+		material.set_shader_parameter("fur_texture", _face.get_shader_parameter("albedo_texture"))
+		material.set_shader_parameter("fur_center", fur_centers[i] / 2048.0)
+		material.set_shader_parameter("fur_axis", axis)
+		if _is_blue:
+			material.set_shader_parameter("iris_color", Color("654030"))
+		eye.material_override = material
+		_eyes.append(eye)
+
+
+func _cursor_target(camera: Camera3D, eyes_center: Vector3) -> Vector3:
+	if camera == null:
+		return eyes_center + global_basis.z
+	if addressing_player:
+		return camera.global_position
+	var viewport := camera.get_viewport()
+	var bounds := viewport.get_visible_rect()
+	var cursor := viewport.get_mouse_position()
+	if not bounds.has_point(cursor) or camera.is_position_behind(eyes_center):
+		return camera.global_position
+	# A point on the cursor ray lets the same gaze work as the board camera tilts.
+	var depth := camera.to_local(eyes_center).z * -0.33
+	return camera.project_position(cursor, maxf(camera.near, depth))
+
+
+func _animate_face(delta: float, target: Vector3) -> void:
 	var blink_time := _clock - _next_blink
 	var closure := smoothstep(0.0, 0.067, blink_time) * (1.0 - smoothstep(0.091, 0.19, blink_time))
 	if blink_time >= 0.19:
 		_next_blink = _clock + randf_range(2.0, 4.6)
-	if closure != _blink:
-		_blink = closure
-		_face.set_shader_parameter("eye_closure", closure)
-	var mouth := lerpf(_mouth, _voice.mouth_opening(), 1.0 - exp(-delta * 27.0))
+	var center := (_eyes[0].global_position + _eyes[1].global_position) * 0.5
+	var forward := _eyes[0].global_basis.z + _eyes[1].global_basis.z
+	var face_basis := Basis.looking_at(forward, _eyes[0].global_basis.y, true)
+	var look := (face_basis.inverse() * (target - center)).normalized()
+	var gaze := Vector2(clampf(look.x, -0.46, 0.46), clampf(look.y, -0.33, 0.35))
+	_eye_gaze = _eye_gaze.lerp(gaze, 1.0 - exp(-delta * 15.0))
+	for i in _eyes.size():
+		var eye := _eyes[i]
+		# The recessed eyes look through sockets that angle out toward the cheeks.
+		var socket_turn := 0.34 if i == 0 else -0.34
+		var direction := face_basis * Vector3(_eye_gaze.x + socket_turn, _eye_gaze.y, 1.0)
+		var local_gaze := eye.global_basis.inverse() * direction
+		var material := eye.material_override as ShaderMaterial
+		material.set_shader_parameter("gaze", local_gaze.normalized())
+		material.set_shader_parameter("blink", closure)
+	var opening: float = _voice.mouth_opening()
+	var speed := 32.0 if opening > _mouth else 21.0
+	var mouth := lerpf(_mouth, opening, 1.0 - exp(-delta * speed))
 	if mouth < 0.001:
 		mouth = 0.0
 	if mouth != _mouth:
 		_mouth = mouth
 		_face.set_shader_parameter("jaw_open", mouth)
-		_body.set_blend_shape_value(_jaw, mouth)
+		var angle := 0.33 if _is_blue else 0.38
+		_rig.set_bone_pose_rotation(_jaw, _jaw_rest_rotation * Quaternion(_jaw_axis, angle * mouth))
 
 
 func shot_setup(checker: Vector3, direction: Vector3) -> ShotSetup:
@@ -393,7 +459,9 @@ func _focus(weight: float) -> void:
 	var roll := _side_sign(_strike_arm) * weight * 0.075
 	var twist := -_side_sign(_strike_arm) * _reach * weight * 0.22
 	_rotate_from_rest(_spine, Vector3(lean, _look_yaw * weight * 0.14 + twist, roll))
-	_rotate_from_rest(_head, Vector3(-lean * 1.35, _look_yaw * weight + 0.035 * sin(_clock),
+	var glance := _cursor_head_turn * (1.0 - weight)
+	_rotate_from_rest(_head, Vector3(-lean * 1.35 - glance.y * 0.09,
+		_look_yaw * weight + glance.x * 0.16 + 0.027 * sin(_clock),
 		-roll + 0.018 * sin(_clock * 1.5)))
 	var resting_arm := 1 - _strike_arm
 	var release := clampf(weight * 1.8, 0.0, 1.0)

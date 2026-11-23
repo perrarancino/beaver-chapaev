@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="384" height="128" viewBox="0 0 384 128">
+  <defs>
+    <linearGradient id="bolt" x1="0" x2="1" y1="0" y2="0">
+      <stop stop-color="#9de1ff" stop-opacity=".25"/>
+      <stop offset=".15" stop-color="#ecfbff"/>
+      <stop offset=".82" stop-color="#f2fdff"/>
+      <stop offset="1" stop-color="#a8eaff" stop-opacity=".45"/>
+    </linearGradient>
+    <radialGradient id="halo">
+      <stop stop-color="#fff"/>
+      <stop offset=".27" stop-color="#fff" stop-opacity=".75"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <path id="arc-a" d="M9 64 25 44 36 78 57 34 69 68 86 51 93 82 119 64"/>
+    <path id="arc-b" d="M9 64 21 75 32 39 52 69 69 46 81 83 100 56 119 64"/>
+  </defs>
+  <g fill="none" stroke-linejoin="round" stroke-linecap="round">
+    <g>
+      <use xlink:href="#arc-a" stroke="#626dff" stroke-width="16" opacity=".23"/>
+      <use xlink:href="#arc-a" stroke="#22a9ff" stroke-width="12" opacity=".17"/>
+      <use xlink:href="#arc-a" stroke="#43bdff" stroke-width="6" opacity=".68"/>
+      <path d="M9 64 21 57 37 56 46 46 61 49M69 68 79 85 93 82 105 65 119 64"
+            stroke="#79b5ff" stroke-width="1.8" opacity=".62"/>
+      <path d="M25 44 34 29 45 24M57 34 67 25 72 12M93 82 103 99 116 95M36 78 46 91 56 88"
+            stroke="#62cbff" stroke-width="2.2" opacity=".82"/>
+      <use xlink:href="#arc-a" stroke="url(#bolt)" stroke-width="2.6"/>
+    </g>
+    <g transform="translate(128)">
+      <use xlink:href="#arc-b" stroke="#626dff" stroke-width="16" opacity=".23"/>
+      <use xlink:href="#arc-b" stroke="#22a9ff" stroke-width="11" opacity=".18"/>
+      <use xlink:href="#arc-b" stroke="#42baff" stroke-width="6" opacity=".63"/>
+      <path d="M9 64 25 61 35 51 52 69 64 72M69 46 78 53 92 38 105 52 119 64"
+            stroke="#79b5ff" stroke-width="1.8" opacity=".62"/>
+      <path d="M32 39 41 22 54 25M52 69 58 96 68 103M81 83 88 103 106 110M100 56 111 37 119 32"
+            stroke="#6cd1ff" stroke-width="2.1" opacity=".79"/>
+      <use xlink:href="#arc-b" stroke="url(#bolt)" stroke-width="2.5"/>
+    </g>
+  </g>
+  <g transform="translate(256)">
+    <circle cx="64" cy="64" r="56" fill="url(#halo)"/>
+    <path d="M64 17 68 57 110 64 68 70 64 110 59 70 18 64 59 58Z" fill="#fff" opacity=".82"/>
+  </g>
+</svg>

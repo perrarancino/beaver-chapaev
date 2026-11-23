@@ -35,9 +35,11 @@ height = 0.004
 radial_segments = 64
 
 [node name="Checker" type="Node3D"]
+physics_interpolation_mode = 1
 script = ExtResource("script")
 
 [node name="PlanarBody" type="RigidBody2D" parent="."]
+physics_interpolation_mode = 2
 physics_material_override = SubResource("wood_contact")
 gravity_scale = 0.0
 continuous_cd = 2

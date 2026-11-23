@@ -1,9 +1,11 @@
-[gd_scene load_steps=8 format=3]
+[gd_scene load_steps=12 format=3]
 
 [ext_resource type="PackedScene" path="res://checker.tscn" id="checker"]
 [ext_resource type="ArrayMesh" path="res://assets/checkers/light_rim.res" id="rim"]
 [ext_resource type="Texture2D" path="res://assets/checkers/light_rim_albedo.webp" id="albedo"]
 [ext_resource type="Texture2D" path="res://assets/checkers/rim_normal.webp" id="normal"]
+[ext_resource type="Shader" path="res://assets/FX/player_turn_aura.gdshader" id="aura_shader"]
+[ext_resource type="Texture2D" path="res://assets/FX/player_turn_aura.png" id="aura_texture"]
 
 [sub_resource type="StandardMaterial3D" id="wood"]
 albedo_texture = ExtResource("albedo")
@@ -19,6 +21,14 @@ roughness = 0.62
 albedo_color = Color(0.82, 0.74, 0.58, 1)
 roughness = 0.5
 
+[sub_resource type="ShaderMaterial" id="turn_aura_material"]
+shader = ExtResource("aura_shader")
+shader_parameter/aura_texture = ExtResource("aura_texture")
+
+[sub_resource type="PlaneMesh" id="turn_aura_plane"]
+material = SubResource("turn_aura_material")
+size = Vector2(0.56, 0.56)
+
 [node name="Checker" instance=ExtResource("checker")]
 
 [node name="OuterRim" parent="Visual" index="0"]
@@ -30,3 +40,9 @@ material_override = SubResource("insert_body")
 
 [node name="Face" parent="Visual/InnerInsert" index="2"]
 material_override = SubResource("insert_face")
+
+[node name="TurnAura" type="MeshInstance3D" parent="." index="2"]
+position = Vector3(0, -0.052, 0)
+visible = false
+cast_shadow = 0
+mesh = SubResource("turn_aura_plane")

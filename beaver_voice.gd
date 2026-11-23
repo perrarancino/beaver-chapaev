@@ -5,12 +5,20 @@ signal idle
 
 # Each clip stores its normalized loudness as digits sampled at 40 Hz.
 const ENVELOPE_FPS := 40.0
+const INTRO_LINE := "Дружок, пизда тебе щас будет, если не выиграешь всех бобров!"
 # Neko-Arc conversion model by Ozzy-Helix:
 # https://huggingface.co/Ozzy-Helix/Neko_Arc_Neko_Aruku.RVCv2
 # Geralt conversion model by Meronix:
 # https://huggingface.co/Meronix/RVC/blob/694d5de5bccfd3bdd0ded4ddbc0cf89238b3e97d/Geralt.zip
 const VOICES := [
 	{
+		&"intro": [
+			[
+				INTRO_LINE,
+				preload("res://assets/beaver/voice/neco/intro_1.ogg"),
+				"00000345879974559998510010000000000000079764389961245589834448995344336864674000000037984311889999667877753557985223233377544359953365875310000000000000",
+			],
+		],
 		&"aim": [
 			[
 				"Мяу! Щас будет пиздец!",
@@ -85,6 +93,13 @@ const VOICES := [
 		],
 	},
 	{
+		&"intro": [
+			[
+				INTRO_LINE,
+				preload("res://assets/beaver/voice/geralt/intro_1.ogg"),
+				"00001346667754457663102110000000000015754323785334546665556456543333345433321010000000004689854338999999989999864567777645445543443222257544555544211110000000000",
+			],
+		],
 		&"aim": [
 			[
 				"Хм. Дерево против дерева.",
@@ -180,6 +195,12 @@ func speak(cue: StringName) -> void:
 		await idle
 	_play_line(cue)
 	await idle
+
+
+func skip_line() -> void:
+	if playing:
+		stop()
+		_on_finished()
 
 
 func react_to_knockout(own_piece: bool) -> void:
