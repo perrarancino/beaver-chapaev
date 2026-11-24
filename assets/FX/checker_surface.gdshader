@@ -57,7 +57,7 @@ void fragment() {
 		float energy = arc.a * smoothstep(0.059, 0.097, radius) * charge;
 		ALBEDO = mix(wood, arc.rgb * vec3(0.55, 0.80, 1.0), energy * 0.52);
 		ROUGHNESS = mix(base_roughness, 0.37, energy);
-		EMISSION = arc.rgb * vec3(0.58, 0.87, 1.16) * (energy * 0.42 + energy * energy * 1.35);
+		EMISSION = arc.rgb * vec3(0.58, 0.87, 1.16) * (energy * 0.42 + energy * energy * 2.20);
 	} else {
 		float time = TIME * 0.9;
 		vec2 flame = grain * vec2(20.0, 15.0) + vec2(time * 0.13, -time);
@@ -76,6 +76,6 @@ void fragment() {
 		}
 		ALBEDO = mix(wood * wood_tint, ember, heat * 0.76);
 		ROUGHNESS = mix(base_roughness, 0.38, heat);
-		EMISSION = ember * heat * 0.42 + seam_color * seams * 0.52;
+		EMISSION = ember * heat * 0.67 + seam_color * seams * 0.88;
 	}
 }

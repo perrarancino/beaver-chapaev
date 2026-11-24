@@ -22,13 +22,13 @@ void fragment() {
 	// Sample along travelled distance so bends stay fixed on the tabletop.
 	float bend = (grain(vec2(s * 5.7, UV2.y)) - 0.5) * 0.94
 		+ (grain(vec2(s * 15.3, UV2.y + 9.1)) - 0.5) * 0.25;
-	float width = mix(0.32, 0.59, grain(vec2(s * 8.1, UV2.y + 2.7)));
+	float width = mix(0.39, 0.70, grain(vec2(s * 8.1, UV2.y + 2.7)));
 	float lateral = (UV.x - bend) / width;
 	float side = abs(lateral);
 	float mask = (1.0 - smoothstep(0.55,1.0,side)) * (0.65 + 0.35 * cloud);
 	mask *= 1.0 - smoothstep(0.91, 1.0, abs(UV.x));
 	vec3 hue = vec3(0.68,0.58,0.44);
-	float strength = 0.37;
+	float strength = 0.49;
 	if (UV2.x == 5.0) {
 		float frost = smoothstep(0.44,0.77,fleck);
 		hue = mix(vec3(0.22,0.61,0.76),vec3(0.85,1.0,1.0),frost);
@@ -39,7 +39,7 @@ void fragment() {
 		strength = 0.44 + 0.52 * vein;
 	} else if (UV2.x == 3.0) {
 		float ember = smoothstep(0.43,0.72,side) * smoothstep(0.45,0.76,fleck);
-		hue = mix(vec3(0.095,0.063,0.052),vec3(1.3,0.38,0.07),ember);
+		hue = mix(vec3(0.095,0.063,0.052),vec3(1.65,0.32,0.035),ember);
 		strength = 0.76;
 	}
 	ALBEDO = hue;

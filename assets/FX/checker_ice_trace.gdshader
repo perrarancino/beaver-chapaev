@@ -32,6 +32,7 @@ void fragment() {
 	}
 	vec4 frost = texture(stroke_atlas, atlas_uv);
 	float remaining = 1.0 - smoothstep(0.12 + frost.b * 0.19, 1.0, melt);
-	ALBEDO = frost.rgb;
-	ALPHA = 1.0 - pow(1.0 - frost.a * remaining * 0.68, coverage);
+	float glint = pow(0.5 + 0.5 * cos(path_distance * 17.0 - trace_clock * TAU), 8.0);
+	ALBEDO = frost.rgb + vec3(0.20, 0.48, 0.75) * glint * remaining * frost.b;
+	ALPHA = 1.0 - pow(1.0 - frost.a * remaining * 0.88, coverage);
 }

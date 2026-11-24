@@ -39,7 +39,7 @@ void fragment() {
 	float face = clamp(dot(normalize(NORMAL), VIEW), 0.0, 1.0);
 	if (pressure_wave) {
 		ALBEDO = mix(vec3(0.95, 0.30, 0.09), vec3(1.0, 0.74, 0.38), face);
-		ALPHA = (1.0 - smoothstep(0.10, 0.53, puff_age)) * (0.22 + face * 0.35);
+		ALPHA = (1.0 - smoothstep(0.10, 0.53, puff_age)) * (0.42 + face * 0.50);
 	} else {
 		float lobe = 0.5 + 0.5 * sin(dot(shape_point, vec3(7.0, 5.0, 9.0)) + puff_seed * 21.0);
 		float hot = (1.0 - smoothstep(0.10, 0.55 - core * 0.22, puff_age));
@@ -50,6 +50,6 @@ void fragment() {
 		ALBEDO = mix(smoke, flame, hot) + vec3(1.2, 0.73, 0.34) * white_heat;
 		float dissolve = 1.0 - smoothstep(0.34 + lobe * 0.12, 1.0, puff_age);
 		float fade_in = smoothstep(0.0, 0.12, puff_age + core * 0.06);
-		ALPHA = mix(0.38, 0.75, hot) * smoothstep(0.06, 0.60, face) * dissolve * fade_in;
+		ALPHA = mix(0.46, 0.93, hot) * smoothstep(0.06, 0.60, face) * dissolve * fade_in;
 	}
 }

@@ -16,6 +16,6 @@ void vertex() {
 
 void fragment() {
 	vec4 frame = texture(frame_texture, frame_uv);
-	ALBEDO = frame.rgb * (is_selected ? 1.32 : 1.04);
+	ALBEDO = frame.rgb * (is_selected ? 1.62 + 0.34 * sin(TIME * 5.0) : 1.14);
 	ALPHA = frame.a * (is_selected ? 1.0 : 0.82);
 }

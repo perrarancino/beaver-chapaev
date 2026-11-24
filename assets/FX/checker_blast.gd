@@ -2,7 +2,7 @@ extends Node3D
 
 const BLAST_SHADER := preload("res://assets/FX/checker_blast.gdshader")
 const LIFETIME := 0.94
-const PUFF_COUNT := 10
+const PUFF_COUNT := 14
 static var puff_mesh: MultiMesh
 static var wave_mesh: TorusMesh
 

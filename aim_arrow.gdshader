@@ -29,6 +29,6 @@ void fragment() {
 	float outline = 1.0 - smoothstep(0.010 - aa, 0.010 + aa, shape);
 	float fade = mix(0.48, 1.0, smoothstep(0.024, min(head_base, 0.30), point.y));
 	vec3 color = mix(shaft_color.rgb, tip_color.rgb, smoothstep(head_base, tip, point.y));
-	ALBEDO = mix(edge_color.rgb, color, fill);
+	ALBEDO = mix(edge_color.rgb, color * (1.0 + 0.55 * pow(0.5 + 0.5 * cos(point.y * 17.0 - TIME * 8.0), 5.0)), fill);
 	ALPHA = outline * fade;
 }

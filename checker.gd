@@ -226,7 +226,7 @@ func set_turn_aura_selected(active: bool) -> void:
 
 
 func stretch_on_impact(world_direction: Vector3, strength: float) -> void:
-	var peak := lerpf(0.15, 0.42, clampf(strength, 0.0, 1.0))
+	var peak := lerpf(0.19, 0.49, clampf(strength, 0.0, 1.0))
 	if stretch_amount > peak:
 		return
 	if stretch_tween and stretch_tween.is_running():
@@ -236,8 +236,12 @@ func stretch_on_impact(world_direction: Vector3, strength: float) -> void:
 	stretch_tween.tween_method(_apply_impact_stretch.bind(axis), stretch_amount, peak, 0.028).set_trans(
 		Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 	stretch_tween.tween_interval(0.045)
-	stretch_tween.tween_method(_apply_impact_stretch.bind(axis), peak, 0.0, 0.23).set_trans(
+	stretch_tween.tween_method(_apply_impact_stretch.bind(axis), peak, -peak * 0.16, 0.16).set_trans(
 		Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+
+
+	stretch_tween.tween_method(_apply_impact_stretch.bind(axis), -peak * 0.16, 0.0, 0.11).set_trans(
+		Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 
 func _apply_impact_stretch(amount: float, board_axis: Vector3) -> void:

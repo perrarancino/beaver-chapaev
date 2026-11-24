@@ -24,5 +24,5 @@ void fragment() {
 	float shape = smoothstep(0.015, 0.17, height) * (1.0 - smoothstep(0.71, 1.0, height));
 	float taper = 0.45 + 0.55 * smoothstep(-0.65, 0.8, sin(angle * 2.0 + TIME * 4.1 + height * 8.0));
 	ALBEDO = mix(vec3(0.53, 0.75, 0.82), vec3(0.93, 0.99, 1.0), thread);
-	ALPHA = shape * taper * wind_strength * (thread * 0.40 + mist * 0.08);
+	ALPHA = shape * taper * wind_strength * (thread * 0.61 + mist * 0.14);
 }

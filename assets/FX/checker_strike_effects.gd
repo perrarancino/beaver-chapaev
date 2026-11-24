@@ -94,7 +94,7 @@ func _fragment_mesh(icon: Checker.Icon) -> PrimitiveMesh:
 	surface.albedo_color = tint
 	surface.emission_enabled = true
 	surface.emission = tint
-	surface.emission_energy_multiplier = 0.75
+	surface.emission_energy_multiplier = 0.30 if icon == Checker.Icon.NONE else 0.75
 	mote.material = surface
 	return mote
 
@@ -105,7 +105,11 @@ func impact(point: Vector3, direction: Vector3, intensity: float,
 	if secondary:
 		strength *= 0.59
 	var origin := point + Vector3.UP * (Checker.HALF_HEIGHT + 0.025)
-	var flash := _emitter(origin, 1, 0.18 if not secondary else 0.13)
+	var ordinary := not element_planes.has(icon)
+	var duration := 0.18 if not secondary else 0.13
+	if ordinary:
+		duration = 0.34 if not secondary else 0.24
+	var flash := _emitter(origin, 1, duration)
 	flash.mesh = element_planes.get(icon, IMPACT_PLANE)
 	flash.color_ramp = IMPACT_AGE
 	flash.scale = Vector3.ONE * strength
@@ -118,8 +122,8 @@ func impact(point: Vector3, direction: Vector3, intensity: float,
 
 	var mesh: Mesh = fragment_meshes.get(icon, fragment_meshes[Checker.Icon.NONE])
 	# The fine layer travels a little farther through its longer lifetime.
-	_fragments(origin, direction, mesh, strength, 4 if secondary else 9, 0.27, 1.0)
-	_fragments(origin, direction, mesh, strength, 6 if secondary else 15, 0.39, 0.46)
+	_fragments(origin, direction, mesh, strength, 4 if secondary else 9, 0.27, 1.0, ordinary)
+	_fragments(origin, direction, mesh, strength, 6 if secondary else 15, 0.39, 0.46, ordinary)
 
 
 func _emitter(origin: Vector3, count: int, duration: float) -> CPUParticles3D:
@@ -139,12 +143,17 @@ func _emitter(origin: Vector3, count: int, duration: float) -> CPUParticles3D:
 
 
 func _fragments(origin: Vector3, hit_direction: Vector3, mesh: Mesh, strength: float,
-		count: int, duration: float, size_factor: float) -> void:
+		count: int, duration: float, size_factor: float, ordinary: bool) -> void:
 	var burst := _emitter(origin, count, duration)
 	burst.mesh = mesh
 	burst.direction = (Vector3.UP + hit_direction.normalized() * 0.3).normalized()
 	burst.spread = 113.0
-	burst.gravity = Vector3.DOWN * 1.85
+	if ordinary:
+		# Larger chips rise first, fine sparks carry the impact direction.
+		var lift := Vector3.UP * (1.35 if size_factor >= 1.0 else 0.48)
+		burst.direction = (lift + hit_direction.normalized()).normalized()
+		burst.spread = 44.0 if size_factor >= 1.0 else 31.0
+	burst.gravity = Vector3.DOWN * (3.2 if ordinary else 1.85)
 	burst.initial_velocity_min = 1.0 * strength
 	burst.initial_velocity_max = 1.65 * strength
 	burst.particle_flag_align_y = true

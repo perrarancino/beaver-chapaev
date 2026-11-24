@@ -3,10 +3,10 @@ extends MeshInstance3D
 const TRAIL_SHADER := preload("res://assets/FX/checker_trail.gdshader")
 const SPACING := 0.032
 const DIAMETER := Checker.RADIUS * 2.0
-const TAIL_DIAMETERS := 3.0
-const BOARD_TRAIL_DIAMETERS := 4.0
+const TAIL_DIAMETERS := 3.8
+const BOARD_TRAIL_DIAMETERS := 4.8
 const BOARD_MARK := preload("res://assets/FX/checker_board_mark.gdshader")
-const STOP_FADE := 0.22
+const STOP_FADE := 0.29
 
 class Track:
 	var points: Array[Vector3] = []

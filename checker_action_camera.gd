@@ -128,7 +128,7 @@ func update(delta: float) -> void:
 	var view := Transform3D(Basis.IDENTITY, focus + view_offset).looking_at(focus, Vector3.UP)
 	var pose := start.interpolate_with(view, smoothstep(0.0, 0.105 if mode == Mode.HIT else 0.055, elapsed))
 	if mode == Mode.HIT:
-		var shake := 0.036 * exp(-elapsed * 11.0) * smoothstep(0.0, 0.05, elapsed)
+		var shake := 0.049 * exp(-elapsed * 11.0) * smoothstep(0.0, 0.05, elapsed)
 		pose.origin += pose.basis.x * sin(elapsed * 99.0) * shake
 		pose.origin += pose.basis.y * sin(elapsed * 77.0) * shake * 0.7
 	camera.global_transform = pose

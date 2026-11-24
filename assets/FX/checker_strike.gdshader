@@ -17,7 +17,7 @@ void vertex() {
 		tile = mod(floor(age * 5.0), 2.0);
 		fade *= 0.83 + 0.17 * cos(age * 29.0);
 	} else {
-		VERTEX.xz *= mix(0.70, 1.35, age);
+		VERTEX.xz *= mix(0.60, 1.60, 1.0 - pow(1.0 - age, 2.0));
 	}
 	sprite_uv = vec2((tile + UV.x) / 3.0, UV.y);
 	opacity = fade;
@@ -25,6 +25,6 @@ void vertex() {
 
 void fragment() {
 	vec4 sprite = texture(strike_atlas, sprite_uv);
-	ALBEDO = sprite.rgb * COLOR.rgb;
+	ALBEDO = sprite.rgb * COLOR.rgb * (1.0 + 0.65 * opacity);
 	ALPHA = sprite.a * COLOR.a * opacity;
 }

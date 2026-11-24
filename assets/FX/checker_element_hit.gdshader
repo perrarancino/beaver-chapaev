@@ -31,7 +31,8 @@ void fragment() {
 		float kink = (1.0 - abs(2.0 * fract(along + 0.25) - 1.0)) * 0.08;
 		float spark = max(abs(q.y - kink) - 0.019, (abs(along) - 1.0) * 0.23);
 		float flash = r - (0.28 + 0.12 * cos(angle * 6.0)) * (1.0 - t);
-		float d = min(spark, flash);
+		float fork = max(abs(q.y + along * 0.12) - 0.015, (abs(along - 0.25) - 0.46) * 0.23);
+		float d = min(min(spark, fork), flash);
 		rgb = mix(vec3(0.05, 0.35, 2.1), vec3(0.55, 2.1, 3.0), mask(d, aa));
 		alpha = mask(d - 0.035, aa) * fade;
 	} else {
@@ -45,6 +46,9 @@ void fragment() {
 		if (element == SNOWFLAKE) {
 			flame = mix(vec3(0.34, 1.30, 1.95), vec3(1.30, 2.40, 2.90), core);
 		}
+		float shard = mask(abs(q.y) + 0.35 * abs(q.x - front) - 0.042, aa);
+		float ember = mask(length(q - vec2(front, 0.0)) - 0.045 * seed, aa);
+		fire = max(fire, (element == SNOWFLAKE ? shard : ember) * sin(PI * t) * fade);
 		alpha = fire + smoke * (1.0 - fire);
 		rgb = (flame * fire + vec3(0.29, 0.25, 0.24) * smoke * (1.0 - fire)) / max(alpha, 0.001);
 	}

@@ -9,6 +9,6 @@ void fragment() {
 		float edge = 0.84 + 0.09 * cos(5.0 * angle + p.y);
 		density = 1.0 - smoothstep(0.20, edge, length(p));
 	}
-	ALBEDO = COLOR.rgb;
+	ALBEDO = COLOR.rgb * (1.0 + 0.35 * density * COLOR.a);
 	ALPHA = COLOR.a * density;
 }

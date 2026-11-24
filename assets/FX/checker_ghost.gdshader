@@ -21,6 +21,6 @@ void fragment() {
 	vec3 rim_color = hostile ? vec3(0.45, 0.09, 0.05) : vec3(0.25, 0.34, 0.46);
 	vec3 emblem_color = hostile ? vec3(0.32, 0.14, 0.095) : vec3(0.14, 0.17, 0.24);
 	vec3 shade = mix(shadow_color, light_color, veil * 0.54 + edge * 0.38);
-	ALBEDO = shade + rim_color * edge + (emblem ? emblem_color : vec3(0.0));
+	ALBEDO = shade + rim_color * edge * (1.55 + veil) + (emblem ? emblem_color : vec3(0.0));
 	ALPHA = (emblem ? 0.56 : 0.29) + veil * 0.12 + edge * 0.19;
 }
