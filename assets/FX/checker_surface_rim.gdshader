@@ -32,7 +32,7 @@ void fragment() {
 		float tip = 0.46 + 0.46 * pow(max(0.0, ridges), 2.0) + 0.06 * variation;
 		float edge = 1.0 - smoothstep(tip - 0.13, tip, height);
 		float heat = (1.0 - height) * (0.73 + 0.27 * ridges);
-		vec3 outer_color = icy ? vec3(0.12, 0.49, 0.90) : vec3(1.0, 0.16, 0.032);
+		vec3 outer_color = icy ? vec3(0.27, 0.64, 0.86) : vec3(1.0, 0.16, 0.032);
 		vec3 core_color = icy ? vec3(0.70, 0.96, 1.0) : vec3(1.0, 0.76, 0.31);
 		ALBEDO = mix(outer_color, core_color, smoothstep(0.16, 0.64, heat));
 		ALPHA = smoothstep(0.08, 0.38, height) * edge * (0.61 + 0.15 * variation);

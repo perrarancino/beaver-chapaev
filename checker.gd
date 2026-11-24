@@ -16,7 +16,7 @@ const SURFACE_RIM_SHADER := preload("res://assets/FX/checker_surface_rim.gdshade
 const GHOST_SHADER := preload("res://assets/FX/checker_ghost.gdshader")
 const WIND_SHADER := preload("res://assets/FX/checker_wind.gdshader")
 const ARC_ATLAS := preload("res://assets/FX/checker_strike_atlas.svg")
-static var frost_materials: Dictionary[StandardMaterial3D, ShaderMaterial] = {}
+static var blue_flame_materials: Dictionary[StandardMaterial3D, ShaderMaterial] = {}
 static var ember_materials: Dictionary[StandardMaterial3D, ShaderMaterial] = {}
 static var electric_materials: Dictionary[StandardMaterial3D, ShaderMaterial] = {}
 static var surface_rim_mesh: CylinderMesh
@@ -25,7 +25,7 @@ static var ghost_materials: Dictionary[int, ShaderMaterial] = {}
 static var wind_mesh: CylinderMesh
 
 enum Icon {
-	NONE, GHOST, SNIPER, EXPLOSIVE, ARMORED, SNOWFLAKE, FLOATING, LIGHTNING, STICKY, RUBBER, VAMPIRE,
+	NONE, GHOST, SNIPER, EXPLOSIVE, ARMORED, SNOWFLAKE, FLOATING, LIGHTNING, STICKY, RUBBER,
 }
 
 signal struck(other: Checker)
@@ -52,18 +52,15 @@ const ICON_DETAILS := {
 	Icon.STICKY: "При столкновении сцепляется с другой шашкой, пока одна из них не покинет поле.",
 	Icon.RUBBER: "Сильно отскакивает от шашек и препятствий.",
 }
-const SIMPLE_EMBLEMS := {
-	Icon.FLOATING: ["≋", Color("bce8f2")],
-	Icon.RUBBER: ["↔", Color("edac71")],
-	Icon.VAMPIRE: ["♥", Color("e77683")],
-}
 const ICON_RADIUS := 0.101
 const ICON_DEPTH := 0.029
 const ICON_SEAT := 0.047
 const ICON_MODELS := {
 	Icon.NONE: preload("res://assets/checkers/ordinary.fbx"),
+	Icon.FLOATING: preload("res://assets/checkers/floating.fbx"),
 	Icon.LIGHTNING: preload("res://assets/checkers/lightning.fbx"),
 	Icon.STICKY: preload("res://assets/checkers/sticky.fbx"),
+	Icon.RUBBER: preload("res://assets/checkers/rubber.fbx"),
 	Icon.GHOST: preload("res://assets/checkers/ghost.glb"),
 	Icon.SNIPER: preload("res://assets/checkers/sniper.fbx"),
 	Icon.EXPLOSIVE: preload("res://assets/checkers/explosive.fbx"),
@@ -79,6 +76,10 @@ const ICON_TEXTURES := {
 		preload("res://assets/checkers/ordinary_albedo.webp"),
 		preload("res://assets/checkers/ordinary_normal.webp"),
 	],
+	Icon.FLOATING: [
+		preload("res://assets/checkers/floating_albedo.webp"),
+		preload("res://assets/checkers/floating_normal.webp"),
+	],
 	Icon.LIGHTNING: [
 		preload("res://assets/checkers/lightning_albedo.webp"),
 		preload("res://assets/checkers/lightning_normal.webp"),
@@ -86,6 +87,10 @@ const ICON_TEXTURES := {
 	Icon.STICKY: [
 		preload("res://assets/checkers/sticky_albedo.webp"),
 		preload("res://assets/checkers/sticky_normal.webp"),
+	],
+	Icon.RUBBER: [
+		preload("res://assets/checkers/rubber_albedo.webp"),
+		preload("res://assets/checkers/rubber_normal.webp"),
 	],
 	Icon.EXPLOSIVE: [
 		preload("res://assets/checkers/explosive_albedo.webp"),
@@ -106,7 +111,6 @@ const ICON_TEXTURES := {
 var falling := false
 var floor_time := 0.0
 var slot := -1
-var hit_source: Checker
 var incoming_velocity := Vector3.ZERO
 var fuse := -1.0
 var exploded := false
@@ -216,6 +220,11 @@ func show_turn_aura(active: bool) -> void:
 		turn_aura.visible = active and not falling
 
 
+func set_turn_aura_selected(active: bool) -> void:
+	if turn_aura:
+		turn_aura.set_instance_shader_parameter("is_selected", active)
+
+
 func stretch_on_impact(world_direction: Vector3, strength: float) -> void:
 	var peak := lerpf(0.15, 0.42, clampf(strength, 0.0, 1.0))
 	if stretch_amount > peak:
@@ -240,10 +249,9 @@ func _apply_impact_stretch(amount: float, board_axis: Vector3) -> void:
 
 
 func _coat_surface() -> void:
-	var icy := icon == Icon.SNOWFLAKE
 	var materials := ember_materials
 	match icon:
-		Icon.SNOWFLAKE: materials = frost_materials
+		Icon.SNOWFLAKE: materials = blue_flame_materials
 		Icon.LIGHTNING: materials = electric_materials
 	for part: MeshInstance3D in [$Visual/OuterRim, $Visual/InnerInsert/Body,
 			$Visual/InnerInsert/Trim, $Visual/InnerInsert/Face]:
@@ -253,16 +261,16 @@ func _coat_surface() -> void:
 		if not materials.has(base):
 			var coating := ShaderMaterial.new()
 			coating.shader = SURFACE_SHADER
-			coating.set_shader_parameter("icy", icy)
+			coating.set_shader_parameter("blue_flame", icon == Icon.SNOWFLAKE)
 			if icon == Icon.LIGHTNING:
 				coating.set_shader_parameter("electric", true)
 				coating.set_shader_parameter("arc_atlas", ARC_ATLAS)
 			coating.set_shader_parameter("base_color", base.albedo_color)
 			coating.set_shader_parameter("base_roughness", base.roughness)
 			coating.set_shader_parameter("metal", base.metallic)
-			if not icy and base.albedo_texture:
+			if base.albedo_texture:
 				coating.set_shader_parameter("wood_texture", base.albedo_texture)
-			if not icy and base.normal_enabled and base.normal_texture:
+			if base.normal_enabled and base.normal_texture:
 				coating.set_shader_parameter("has_normal", true)
 				coating.set_shader_parameter("surface_normal", base.normal_texture)
 			materials[base] = coating
@@ -341,21 +349,6 @@ func _add_wind() -> void:
 
 
 func _build_emblem() -> void:
-	if SIMPLE_EMBLEMS.has(icon):
-		var badge: Array = SIMPLE_EMBLEMS[icon]
-		var glyph := Label3D.new()
-		glyph.name = "Emblem"
-		glyph.text = badge[0]
-		glyph.modulate = badge[1]
-		glyph.outline_modulate = Color("3a302b")
-		glyph.outline_size = 9
-		glyph.font_size = 84
-		glyph.pixel_size = 0.0019
-		glyph.position.y = ICON_SEAT + 0.005
-		glyph.rotation.x = -PI / 2.0
-		glyph.double_sided = false
-		$Visual.add_child(glyph)
-		return
 	var model := (ICON_MODELS[icon] as PackedScene).instantiate() as Node3D
 	var emblem := model.get_child(0) as MeshInstance3D
 	var bounds := emblem.get_aabb()

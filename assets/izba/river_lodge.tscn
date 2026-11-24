@@ -61,7 +61,7 @@ autoplay = "hearth_flicker"
 [node name="PendantLight" type="OmniLight3D" parent="."]
 position = Vector3(0, 3.55, -1.04)
 light_color = Color(1, 0.74, 0.45, 1)
-light_energy = 0.95
+light_energy = 0.67
 omni_range = 7.9
 
 [node name="WindowLight" type="OmniLight3D" parent="."]

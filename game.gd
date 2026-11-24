@@ -34,7 +34,6 @@ var formations: Array[PackedVector3Array] = [PackedVector3Array(), PackedVector3
 var player_setup: Array[Checker.Icon] = []
 var enemy_setup: Array[Checker.Icon] = []
 var run := Run.new()
-var defeated: Array[Dictionary] = []
 var shot_knockouts: Array[bool] = [false, false]
 var contacts: Array[Array] = []
 var links: Array[Dictionary] = []
@@ -87,6 +86,7 @@ var orbiting := false
 
 func _ready() -> void:
 	rng.randomize()
+	_start_lamp_flicker()
 	camera = $Camera3D
 	action_camera.camera = camera
 	beaver_camera_transform = camera.transform
@@ -113,6 +113,30 @@ func _ready() -> void:
 			enemy_setup.append(piece.icon)
 		piece.queue_free()
 	_play_intro.call_deferred()
+
+func _start_lamp_flicker() -> void:
+	var key_light: SpotLight3D = $KeyLight
+	var pendant_light: OmniLight3D = $Izba/PendantLight
+	var diffuser: MeshInstance3D = $Izba/WinterLodge/Izba/HangingLamp/Diffuser
+	var glass := diffuser.get_active_material(0).duplicate() as StandardMaterial3D
+	diffuser.set_surface_override_material(0, glass)
+	var key_energy := key_light.light_energy
+	var pendant_energy := pendant_light.light_energy
+	var glass_energy := glass.emission_energy_multiplier
+	var set_level := func(level: float) -> void:
+		key_light.light_energy = key_energy * level
+		pendant_light.light_energy = pendant_energy * level
+		glass.emission_energy_multiplier = glass_energy * level
+	_schedule_lamp_flicker(set_level)
+
+func _schedule_lamp_flicker(set_level: Callable) -> void:
+	var flicker := create_tween().set_trans(Tween.TRANS_SINE)
+	flicker.tween_interval(randf_range(22.0, 40.0))
+	flicker.tween_method(set_level, 1.0, 0.72, 0.065)
+	flicker.tween_method(set_level, 0.72, 0.97, 0.075)
+	flicker.tween_method(set_level, 0.97, 0.86, 0.055)
+	flicker.tween_method(set_level, 0.86, 1.0, 0.14)
+	flicker.finished.connect(_schedule_lamp_flicker.bind(set_level), CONNECT_ONE_SHOT)
 
 func _material(color: Color, roughness := 0.8, metallic := 0.0) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
@@ -337,7 +361,6 @@ func _new_round() -> void:
 	effects_mesh.clear_surfaces()
 	checker_trails.clear()
 	strike_effects.clear()
-	defeated.clear()
 	for p in pieces:
 		if is_instance_valid(p): p.queue_free()
 	pieces.clear()
@@ -424,6 +447,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		var picked := hit.get("collider") as Checker
 		if picked and picked.side == 0:
 			selected = picked
+			picked.set_turn_aura_selected(true)
 			drag_start = event.position
 			var hit_point: Vector3 = hit.position
 			strike_offset = (hit_point - picked.global_position).slide(Vector3.UP)
@@ -460,6 +484,8 @@ func _piece_hit(cursor: Vector2) -> Dictionary:
 	return result
 
 func _cancel_aim() -> void:
+	if is_instance_valid(selected):
+		selected.set_turn_aura_selected(false)
 	selected = null
 	aiming = false
 	strike_offset = Vector3.ZERO
@@ -646,7 +672,7 @@ func _shoot(piece: Checker, direction: Vector3, strength: float, offset := Vecto
 		ghost_previous_position = Checker.to_plane(piece.global_position)
 	piece.incoming_velocity = direction * strength * SHOT_IMPULSE * piece.shot_multiplier() / piece.mass
 	var lever := offset.slide(direction).limit_length(Checker.RADIUS) * 0.30
-	_push(piece, piece.incoming_velocity, piece, lever)
+	_push(piece, piece.incoming_velocity, lever)
 	var intensity := clampf(piece.incoming_velocity.length() / 6.0, 0.12, 1.0)
 	piece.stretch_on_impact(direction, intensity)
 
@@ -655,7 +681,6 @@ func _begin_shot_resolution() -> void:
 	phase = "moving"
 	shot_knockouts.fill(false)
 	for piece in pieces:
-		piece.hit_source = null
 		piece.incoming_velocity = Vector3.ZERO
 		piece.lightning_used = false
 	_reset_stillness()
@@ -705,22 +730,14 @@ func _resolve_ghost_contacts() -> void:
 			_trigger_contact(other, phasing_piece)
 	ghost_previous_position = point
 
-func _source(piece: Checker) -> Checker:
-	return piece.hit_source if is_instance_valid(piece.hit_source) else piece
-
-func _push(piece: Checker, velocity: Vector3, source: Checker, offset := Vector3.ZERO) -> void:
+func _push(piece: Checker, velocity: Vector3, offset := Vector3.ZERO) -> void:
 	if piece.falling or velocity.length_squared() < 0.0001:
 		return
-	piece.hit_source = source
 	piece.apply_planar_impulse(velocity, offset)
 
 func _touch(a: Checker, b: Checker, normal: Vector3) -> void:
 	var a_speed := a.incoming_velocity.dot(normal)
 	var b_speed := -b.incoming_velocity.dot(normal)
-	if a_speed > maxf(b_speed, 0.025):
-		b.hit_source = _source(a)
-	elif b_speed > maxf(a_speed, 0.025):
-		a.hit_source = _source(b)
 	var closing_speed := a_speed + b_speed
 	if closing_speed > 0.32:
 		var a_struck := a_speed >= b_speed
@@ -744,7 +761,7 @@ func _trigger_contact(piece: Checker, other: Checker) -> void:
 		Checker.Icon.LIGHTNING:
 			if not piece.lightning_used:
 				piece.lightning_used = true
-				lightning.append({"source": piece, "side": piece.side, "next": other,
+				lightning.append({"side": piece.side, "next": other,
 					"origin": _on_board(piece.global_position), "visual_origin": piece.global_position,
 					"seen": [], "delay": 0.0})
 		Checker.Icon.STICKY:
@@ -805,7 +822,7 @@ func _explode(bomb: Checker) -> void:
 		var offset := _on_board(piece.global_position) - center
 		var strength := 5.2 * (1.0 - offset.length() / 1.12)
 		if strength > 0.0:
-			_push(piece, offset.normalized() * strength, bomb)
+			_push(piece, offset.normalized() * strength)
 
 func _lightning_hop(chain: Dictionary) -> bool:
 	var target: Checker = chain.next
@@ -819,8 +836,7 @@ func _lightning_hop(chain: Dictionary) -> bool:
 		board_pivot.to_local(target.global_position + bolt_height))
 	var hop_direction: Vector3 = board_pivot.global_basis.inverse() * (endpoint - chain.origin)
 	strike_effects.impact(target.position, hop_direction, 0.3, Checker.Icon.LIGHTNING, true)
-	var source: Checker = chain.source if is_instance_valid(chain.source) else null
-	_push(target, (endpoint - chain.origin).normalized() * 0.56, source)
+	_push(target, (endpoint - chain.origin).normalized() * 0.56)
 	chain.seen.append(target)
 	chain.origin = endpoint
 	chain.visual_origin = target.global_position
@@ -912,46 +928,6 @@ func _eliminate(piece: Checker) -> void:
 	if not shot_knockouts[piece.side]:
 		shot_knockouts[piece.side] = true
 		beaver_voice.react_to_knockout(piece.side == 1)
-	defeated.append({"side": piece.side, "icon": piece.icon, "slot": piece.slot,
-		"exploded": piece.exploded, "ghost_spent": piece.ghost_spent, "float_used": piece.float_used})
-	var source := piece.hit_source
-	if is_instance_valid(source) and not source.falling and source.side != piece.side and source.icon == Checker.Icon.VAMPIRE:
-		_revive_ally(source)
-
-func _revive_ally(vampire: Checker) -> void:
-	for i in defeated.size():
-		var lost := defeated[i]
-		if lost.side != vampire.side:
-			continue
-		var spot := _free_spot(vampire.side, lost.slot)
-		if spot == Vector3.INF:
-			return
-		var restored := _make_piece(vampire.side, lost.icon, board_pivot.to_local(spot), lost.slot)
-		restored.exploded = lost.exploded
-		restored.float_used = lost.float_used
-		if lost.ghost_spent:
-			restored.spend_ghost()
-		defeated.remove_at(i)
-		return
-
-func _free_spot(side: int, slot: int, ignore: Checker = null) -> Vector3:
-	var home := board_pivot.to_global(formations[side][slot])
-	if _spot_is_clear(home, ignore):
-		return home
-	for ring in range(1, 6):
-		for i in ring * 8:
-			var point := Vector3(0, PIECE_Y, 0) + Vector3.FORWARD.rotated(Vector3.UP, TAU * i / (ring * 8)) * (0.36 * ring)
-			if _spot_is_clear(point, ignore):
-				return point
-	return Vector3.INF
-
-func _spot_is_clear(point: Vector3, ignore: Checker) -> bool:
-	if _is_off_board(point):
-		return false
-	for other in pieces:
-		if other != ignore and not other.falling and other.global_position.distance_squared_to(point) < 0.325 * 0.325:
-			return false
-	return true
 
 func _physics_process(delta: float) -> void:
 	if phase != "moving": return
@@ -1067,7 +1043,7 @@ func _materialize_ghost() -> void:
 			var direction := offset.normalized()
 			if direction.is_zero_approx():
 				direction = (other.global_position - destination).slide(Vector3.UP).normalized()
-			_push(other, direction * lerpf(0.12, 0.55, depth / GHOST_LANDING_CLEARANCE), piece)
+			_push(other, direction * lerpf(0.12, 0.55, depth / GHOST_LANDING_CLEARANCE))
 	piece.place_on_board(board_pivot.to_local(destination), piece.rotation.y)
 	checker_trails.forget(piece)
 	piece.reset_physics_interpolation()

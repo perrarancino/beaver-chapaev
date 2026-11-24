@@ -77,35 +77,26 @@ func tick(delta: float) -> void:
 
 
 func _fragment_mesh(icon: Checker.Icon) -> PrimitiveMesh:
-	var shape: PrimitiveMesh
+	var mote := SphereMesh.new()
+	mote.radial_segments = 5
+	mote.rings = 2
+	mote.radius = 0.024
+	mote.height = 0.12
 	var tint := Color(1.0, 0.77, 0.36)
-	if icon == Checker.Icon.SNOWFLAKE:
-		var shard := PrismMesh.new()
-		shard.size = Vector3(0.065, 0.14, 0.045)
-		shard.left_to_right = 0.28
-		shape = shard
-		tint = Color(0.48, 0.87, 1.0)
-	else:
-		var mote := SphereMesh.new()
-		mote.radial_segments = 5
-		mote.rings = 2
-		mote.radius = 0.024
-		mote.height = 0.12
-		if icon == Checker.Icon.LIGHTNING:
-			mote.radius = 0.012
-			mote.height = 0.17
-			tint = Color(0.16, 0.76, 1.0)
-		elif icon == Checker.Icon.EXPLOSIVE:
-			mote.height = 0.064
-			tint = Color(1.0, 0.38, 0.075)
-		shape = mote
+	if icon == Checker.Icon.LIGHTNING:
+		mote.radius = 0.012
+		mote.height = 0.17
+		tint = Color(0.16, 0.76, 1.0)
+	elif icon == Checker.Icon.EXPLOSIVE or icon == Checker.Icon.SNOWFLAKE:
+		mote.height = 0.064
+		tint = Color(0.48, 0.87, 1.0) if icon == Checker.Icon.SNOWFLAKE else Color(1.0, 0.38, 0.075)
 	var surface := StandardMaterial3D.new()
 	surface.albedo_color = tint
 	surface.emission_enabled = true
 	surface.emission = tint
 	surface.emission_energy_multiplier = 0.75
-	shape.material = surface
-	return shape
+	mote.material = surface
+	return mote
 
 
 func impact(point: Vector3, direction: Vector3, intensity: float,

@@ -17,43 +17,8 @@ background_mode = 1
 background_color = Color(0.025, 0.03, 0.04, 1)
 ambient_light_source = 2
 ambient_light_color = Color(0.57, 0.49, 0.41, 1)
-ambient_light_energy = 0.17
+ambient_light_energy = 0.11
 tonemap_mode = 2
-ssao_enabled = true
-ssao_radius = 3.31
-ssao_intensity = 2.82
-ssao_power = 1.5528973
-ssao_detail = 0.85
-ssao_horizon = 0.0
-ssao_sharpness = 1.0
-ssao_light_affect = 0.06
-ssao_ao_channel_affect = 0.05
-ssil_enabled = true
-ssil_radius = 2.6
-ssil_intensity = 3.75
-ssil_sharpness = 0.48
-glow_enabled = true
-glow_levels/2 = 1.5
-glow_normalized = true
-glow_intensity = 2.61
-glow_strength = 1.11
-glow_bloom = 0.04
-glow_blend_mode = 0
-glow_hdr_threshold = 0.26
-glow_hdr_luminance_cap = 17.28
-fog_mode = 1
-fog_light_energy = 2.98
-fog_density = 1.0
-volumetric_fog_density = 0.0088
-volumetric_fog_emission_energy = 0.0
-volumetric_fog_gi_inject = 0.04
-volumetric_fog_anisotropy = 0.48
-volumetric_fog_length = 201.24
-volumetric_fog_detail_spread = 1.2311442
-adjustment_enabled = true
-adjustment_brightness = 1.02
-adjustment_contrast = 0.995
-adjustment_saturation = 1.24
 
 [sub_resource type="StandardMaterial3D" id="frame"]
 albedo_color = Color(0.69, 0.54, 0.39, 1)
@@ -97,7 +62,7 @@ fov = 51.5
 [node name="KeyLight" type="SpotLight3D" parent="." unique_id=1062631679]
 transform = Transform3D(1, 0, 0, 0, -0.27563736, 0.9612617, 0, -0.9612617, -0.27563736, 0, 3.55, -1.04)
 light_color = Color(1, 0.79, 0.56, 1)
-light_energy = 1.8
+light_energy = 1.35
 light_size = 0.17
 shadow_enabled = true
 shadow_bias = 0.09
@@ -110,7 +75,7 @@ spot_angle = 48.0
 [node name="BeaverFill" type="OmniLight3D" parent="." unique_id=204658940]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.42, -0.08)
 light_color = Color(1, 0.91, 0.79, 1)
-light_energy = 0.58
+light_energy = 0.44
 omni_range = 5.6
 
 [node name="CheckerFill" type="SpotLight3D" parent="." unique_id=1168719172]

@@ -5,7 +5,7 @@
 [ext_resource type="Texture2D" path="res://assets/checkers/light_rim_albedo.webp" id="albedo"]
 [ext_resource type="Texture2D" path="res://assets/checkers/rim_normal.webp" id="normal"]
 [ext_resource type="Shader" path="res://assets/FX/player_turn_aura.gdshader" id="aura_shader"]
-[ext_resource type="Texture2D" path="res://assets/FX/player_turn_aura.png" id="aura_texture"]
+[ext_resource type="Texture2D" path="res://assets/FX/player_turn_emerald_frame.png" id="aura_frame"]
 
 [sub_resource type="StandardMaterial3D" id="wood"]
 albedo_texture = ExtResource("albedo")
@@ -23,11 +23,11 @@ roughness = 0.5
 
 [sub_resource type="ShaderMaterial" id="turn_aura_material"]
 shader = ExtResource("aura_shader")
-shader_parameter/aura_texture = ExtResource("aura_texture")
+shader_parameter/frame_texture = ExtResource("aura_frame")
 
 [sub_resource type="PlaneMesh" id="turn_aura_plane"]
 material = SubResource("turn_aura_material")
-size = Vector2(0.56, 0.56)
+size = Vector2(0.52, 0.52)
 
 [node name="Checker" instance=ExtResource("checker")]
 

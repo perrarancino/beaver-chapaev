@@ -7,7 +7,7 @@ uniform vec4 base_color : source_color = vec4(1.0);
 uniform float base_roughness = 0.55;
 uniform float metal = 0.0;
 uniform bool has_normal = false;
-uniform bool icy = false;
+uniform bool blue_flame = false;
 uniform bool electric = false;
 instance uniform bool is_rim = false;
 instance uniform vec3 part_offset = vec3(0.0);
@@ -36,35 +36,8 @@ float noise(vec2 point) {
 		weight.y);
 }
 
-vec2 ice_facets(vec2 point) {
-	vec2 origin = floor(point - 0.5) + 0.5;
-	float near_cell = 10.0;
-	float next_cell = 10.0;
-	float shade = 0.0;
-	for (int y = 0; y < 2; y++) {
-		for (int x = 0; x < 2; x++) {
-			vec2 cell = origin + vec2(float(x), float(y));
-			float id = hash(cell);
-			vec2 seed = cell + (vec2(id, hash(cell + vec2(17.3, 31.4))) - 0.5) * 0.46;
-			vec2 offset = point - seed;
-			float distance_to_cell = dot(offset, offset);
-			if (distance_to_cell < near_cell) {
-				next_cell = near_cell;
-				near_cell = distance_to_cell;
-				shade = id;
-			} else {
-				next_cell = min(next_cell, distance_to_cell);
-			}
-		}
-	}
-	return vec2(next_cell - near_cell, shade);
-}
-
 void fragment() {
-	vec3 wood = base_color.rgb;
-	if (!icy) {
-		wood *= texture(wood_texture, UV).rgb;
-	}
+	vec3 wood = base_color.rgb * texture(wood_texture, UV).rgb;
 	vec3 p = surface_point;
 	vec2 grain = p.xz + p.y * vec2(0.81, 0.67);
 	float edge = smoothstep(0.060, 0.151, length(p.xz));
@@ -82,25 +55,9 @@ void fragment() {
 		vec4 arc = texture(arc_atlas, vec2((arc_frame + run) / 3.0, fract(sector)));
 		float charge = 0.79 + 0.21 * sin(TIME * 4.2 - run * 11.0 + floor(sector) * 1.8);
 		float energy = arc.a * smoothstep(0.059, 0.097, radius) * charge;
-		vec3 blue_wood = mix(wood * vec3(0.55, 0.70, 0.91), vec3(0.030, 0.086, 0.16), 0.42);
-		ALBEDO = mix(blue_wood, arc.rgb * vec3(0.55, 0.80, 1.0), energy * 0.52);
+		ALBEDO = mix(wood, arc.rgb * vec3(0.55, 0.80, 1.0), energy * 0.52);
 		ROUGHNESS = mix(base_roughness, 0.37, energy);
 		EMISSION = arc.rgb * vec3(0.58, 0.87, 1.16) * (energy * 0.42 + energy * energy * 1.35);
-	} else if (icy) {
-		vec2 grid = mat2(vec2(24.0, -13.0), vec2(11.0, 33.0)) * grain;
-		vec2 facets = ice_facets(grid);
-		float detail = 1.0 - smoothstep(0.30, 0.85, length(fwidth(grid)));
-		float cracks = (1.0 - smoothstep(0.018, 0.17, facets.x)) * detail;
-		float clusters = noise(grain * 25.0);
-		float frost = smoothstep(0.22, 0.74, clusters * 0.62 + edge * 0.45);
-		float glint = pow(max(0.0, sin(dot(p, vec3(14.0, 7.0, 20.0)) - TIME * 1.35)), 14.0);
-		vec3 glass = mix(vec3(0.10, 0.36, 0.55), vec3(0.58, 0.84, 0.97), facets.y);
-		vec3 rime = mix(glass, vec3(0.76, 0.91, 1.0), frost * 0.71 + cracks * 0.20);
-		float brightness = dot(base_color.rgb, vec3(0.21, 0.72, 0.07));
-		vec3 ice_base = mix(vec3(0.065, 0.15, 0.25), vec3(0.26, 0.48, 0.61), brightness);
-		ALBEDO = mix(ice_base, rime, 0.66 + frost * 0.30);
-		ROUGHNESS = mix(0.24, 0.55, frost);
-		EMISSION = vec3(0.33, 0.68, 0.95) * (0.02 + frost * 0.04 + cracks * (0.15 + glint * 0.26));
 	} else {
 		float time = TIME * 0.9;
 		vec2 flame = grain * vec2(20.0, 15.0) + vec2(time * 0.13, -time);
@@ -110,8 +67,15 @@ void fragment() {
 		float heat = smoothstep(0.40, 0.85, flow + edge * 0.13);
 		float seams = (1.0 - smoothstep(0.016, 0.105, abs(flow - 0.58))) * heat;
 		vec3 ember = mix(vec3(0.47, 0.027, 0.006), vec3(1.0, 0.35, 0.035), heat);
-		ALBEDO = mix(wood * vec3(0.62, 0.37, 0.27), ember, heat * 0.76);
+		vec3 wood_tint = vec3(0.62, 0.37, 0.27);
+		vec3 seam_color = vec3(1.0, 0.44, 0.10);
+		if (blue_flame) {
+			ember = mix(vec3(0.18, 0.54, 0.76), vec3(0.59, 0.88, 0.99), heat);
+			wood_tint = vec3(0.46, 0.76, 0.98);
+			seam_color = vec3(0.65, 0.92, 1.0);
+		}
+		ALBEDO = mix(wood * wood_tint, ember, heat * 0.76);
 		ROUGHNESS = mix(base_roughness, 0.38, heat);
-		EMISSION = ember * heat * 0.42 + vec3(1.0, 0.44, 0.10) * seams * 0.52;
+		EMISSION = ember * heat * 0.42 + seam_color * seams * 0.52;
 	}
 }
