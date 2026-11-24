@@ -6,20 +6,23 @@ signal returned_to_stance
 const BEAVER_MATERIAL := preload("res://assets/beaver/beaver_material.tres")
 const BLUE_BEAVER_MODEL := preload("res://assets/beaver/blue/beaver.glb")
 const BLUE_BEAVER_MATERIAL := preload("res://assets/beaver/blue/beaver_material.tres")
+const CHEF_BEAVER_MODEL := preload("res://assets/beaver/chef/beaver.glb")
+const CHEF_BEAVER_MATERIAL := preload("res://assets/beaver/chef/beaver_material.tres")
 const EYE_SHADER := preload("res://assets/beaver/beaver_eye.gdshader")
 const IDLE_PAW_DIRECTION := Vector3(0, -0.985, 0.173)
-const STANCE_RADIUS := 4.19
 const SHOULDER_OFFSET := 1.31
 const MAX_ARM_EXTENSION := 0.25
 
-const STEP_SPACING := 1.55
-const STEP_HEIGHT := 0.178
-const WALK_SPEED := 6.15
+const STEP_SPACING := 1.12
+const STEP_HEIGHT := 0.22
+const WALK_SPEED := 4.8
 
 class ShotSetup:
 	var stance: Vector3
 	var arm: int
 	var cost: float
+
+enum Opponent { ORIGINAL, BLUE, CHEF }
 
 enum Joint { UPPER, LOWER, END, FINGERTIP }
 
@@ -30,7 +33,7 @@ var addressing_player := false
 var _model: Node3D
 var _rig: Skeleton3D
 var _body: MeshInstance3D
-var _is_blue := false
+var opponent := Opponent.ORIGINAL
 
 var _arms: Array[PackedInt32Array] = []
 var _shoulders := PackedInt32Array()
@@ -54,6 +57,7 @@ var _fingertips: Array[Vector3] = []
 var _spine: int
 var _head: int
 var _home: Vector3
+var _home_stance: Vector3
 var _stance := Vector3.ZERO
 var _clock := 0.0
 var _strike_arm := 0
@@ -68,24 +72,28 @@ var _busy := false
 func _ready() -> void:
 	_model = $Model
 	var material := BEAVER_MATERIAL
+	var sole_offset := 0.156
 	if not Engine.is_editor_hint():
-		_is_blue = randi_range(0, 1) == 1
-		_voice.select_opponent(_is_blue)
-	if _is_blue:
-		var blue := BLUE_BEAVER_MODEL.instantiate() as Node3D
-		blue.transform = _model.transform
-		remove_child(_model)
-		_model.queue_free()
-		_model = blue
-		_model.name = &"Model"
-		add_child(_model)
-		material = BLUE_BEAVER_MATERIAL
+		opponent = randi_range(0, Opponent.size() - 1) as Opponent
+		_voice.select_opponent(opponent)
+	match opponent:
+		Opponent.BLUE:
+			_replace_model(BLUE_BEAVER_MODEL)
+			material = BLUE_BEAVER_MATERIAL
+			sole_offset = 0.042
+		Opponent.CHEF:
+			_replace_model(CHEF_BEAVER_MODEL)
+			material = CHEF_BEAVER_MATERIAL
+			sole_offset = 0.174
+			position.z -= 0.14
+	# The shared rig has different sole heights on the three meshes.
+	_model.position.y += sole_offset
 	_rig = _model.get_node("Rig/Skeleton3D")
 	_body = _rig.get_node("Body")
 	_face = material.duplicate() as ShaderMaterial
 	if OS.has_feature("web"):
 		_face.set_shader_parameter("normal_strength", 0.55)
-	_body.material_override = _face
+	_body.set_surface_override_material(0, _face)
 	_jaw = _rig.find_bone("Jaw")
 	_jaw_rest_rotation = _rig.get_bone_rest(_jaw).basis.get_rotation_quaternion()
 	_jaw_axis = (_rig.get_bone_global_rest(_jaw).basis.inverse() * Vector3.RIGHT).normalized()
@@ -93,7 +101,8 @@ func _ready() -> void:
 	_waist = _rig.find_bone("Spine1")
 	_waist_rest_inverse = _rig.get_bone_global_rest(_waist).affine_inverse()
 	_home = position
-	_stance = Vector3(0.0, -_home.z, 0.0)
+	_home_stance = Vector3(0.0, -_home.z, 0.0)
+	_stance = _home_stance
 	_spine = _rig.find_bone("Spine")
 	_head = _rig.find_bone("Head")
 	_setup_eyes()
@@ -121,6 +130,16 @@ func _ready() -> void:
 	_rest()
 
 
+func _replace_model(scene: PackedScene) -> void:
+	var next := scene.instantiate() as Node3D
+	next.transform = _model.transform
+	remove_child(_model)
+	_model.queue_free()
+	_model = next
+	_model.name = &"Model"
+	add_child(_model)
+
+
 func _process(delta: float) -> void:
 	if Engine.is_editor_hint():
 		return
@@ -138,9 +157,16 @@ func _process(delta: float) -> void:
 func _setup_eyes() -> void:
 	var fur_centers := [Vector2(1208, 844), Vector2(1363, 852)]
 	var atlas_axes := [Vector2(0.78, -0.63), Vector2(0.65, 0.76)]
-	if _is_blue:
-		fur_centers = [Vector2(591, 544), Vector2(598, 906)]
-		atlas_axes = [Vector2(-0.52, 0.85), Vector2(0.52, 0.85)]
+	var iris := Color("87502a")
+	match opponent:
+		Opponent.BLUE:
+			fur_centers = [Vector2(591, 544), Vector2(598, 906)]
+			atlas_axes = [Vector2(-0.52, 0.85), Vector2(0.52, 0.85)]
+			iris = Color("654030")
+		Opponent.CHEF:
+			fur_centers = [Vector2(1241, 803), Vector2(988, 803)]
+			atlas_axes = [Vector2.RIGHT, Vector2.RIGHT]
+			iris = Color("805019")
 	var names: Array[StringName] = [&"LeftEye", &"RightEye"]
 	for i in names.size():
 		var eye := _model.find_child(names[i], true, false) as MeshInstance3D
@@ -150,8 +176,7 @@ func _setup_eyes() -> void:
 		material.set_shader_parameter("fur_texture", _face.get_shader_parameter("albedo_texture"))
 		material.set_shader_parameter("fur_center", fur_centers[i] / 2048.0)
 		material.set_shader_parameter("fur_axis", axis)
-		if _is_blue:
-			material.set_shader_parameter("iris_color", Color("654030"))
+		material.set_shader_parameter("iris_color", iris)
 		eye.material_override = material
 		_eyes.append(eye)
 
@@ -172,6 +197,19 @@ func _cursor_target(camera: Camera3D, eyes_center: Vector3) -> Vector3:
 
 
 func _animate_face(delta: float, target: Vector3) -> void:
+	_animate_eyes(delta, target)
+	var opening: float = _voice.mouth_opening()
+	var speed := 32.0 if opening > _mouth else 21.0
+	var mouth := lerpf(_mouth, opening, 1.0 - exp(-delta * speed))
+	if mouth < 0.001:
+		mouth = 0.0
+	if mouth != _mouth:
+		_mouth = mouth
+		var angle := 0.31 if opponent == Opponent.BLUE else 0.35
+		_rig.set_bone_pose_rotation(_jaw, _jaw_rest_rotation * Quaternion(_jaw_axis, angle * mouth))
+
+
+func _animate_eyes(delta: float, target: Vector3) -> void:
 	var blink_time := _clock - _next_blink
 	var closure := smoothstep(0.0, 0.067, blink_time) * (1.0 - smoothstep(0.091, 0.19, blink_time))
 	if blink_time >= 0.19:
@@ -182,25 +220,15 @@ func _animate_face(delta: float, target: Vector3) -> void:
 	var look := (face_basis.inverse() * (target - center)).normalized()
 	var gaze := Vector2(clampf(look.x, -0.46, 0.46), clampf(look.y, -0.33, 0.35))
 	_eye_gaze = _eye_gaze.lerp(gaze, 1.0 - exp(-delta * 15.0))
-	for i in _eyes.size():
-		var eye := _eyes[i]
-		# The recessed eyes look through sockets that angle out toward the cheeks.
-		var socket_turn := 0.34 if i == 0 else -0.34
-		var direction := face_basis * Vector3(_eye_gaze.x + socket_turn, _eye_gaze.y, 1.0)
-		var local_gaze := eye.global_basis.inverse() * direction
+	var gaze_shift := face_basis * Vector3(_eye_gaze.x, _eye_gaze.y, 0.0)
+	for eye in _eyes:
+		var socket := eye.global_basis.orthonormalized()
+		var face_forward := socket.inverse() * face_basis.z
+		var neutral := Vector3.BACK.lerp(face_forward, 0.5)
+		var local_gaze := neutral + socket.inverse() * gaze_shift
 		var material := eye.material_override as ShaderMaterial
 		material.set_shader_parameter("gaze", local_gaze.normalized())
 		material.set_shader_parameter("blink", closure)
-	var opening: float = _voice.mouth_opening()
-	var speed := 32.0 if opening > _mouth else 21.0
-	var mouth := lerpf(_mouth, opening, 1.0 - exp(-delta * speed))
-	if mouth < 0.001:
-		mouth = 0.0
-	if mouth != _mouth:
-		_mouth = mouth
-		_face.set_shader_parameter("jaw_open", mouth)
-		var angle := 0.33 if _is_blue else 0.38
-		_rig.set_bone_pose_rotation(_jaw, _jaw_rest_rotation * Quaternion(_jaw_axis, angle * mouth))
 
 
 func shot_setup(checker: Vector3, direction: Vector3) -> ShotSetup:
@@ -210,15 +238,16 @@ func shot_setup(checker: Vector3, direction: Vector3) -> ShotSetup:
 	if forward.is_zero_approx():
 		return null
 	var right := Vector3.UP.cross(forward)
+	var radius := _home_stance.y
 	var best: ShotSetup
 	for arm in range(_arms.size()):
 		# Put the striking shoulder just outside the shot line, toward the back of the paw.
 		var lane := target - right * _side_sign(arm) * SHOULDER_OFFSET
 		lane.y = 0.0
 		var across := lane.dot(right)
-		if absf(across) >= STANCE_RADIUS:
+		if absf(across) >= radius:
 			continue
-		var setback := lane.dot(forward) + sqrt(STANCE_RADIUS * STANCE_RADIUS - across * across)
+		var setback := lane.dot(forward) + sqrt(radius * radius - across * across)
 		if setback < 0.74 or setback > 4.01:
 			continue
 		var base := lane - forward * setback
@@ -226,13 +255,13 @@ func shot_setup(checker: Vector3, direction: Vector3) -> ShotSetup:
 		var yaw := angle_difference(-angle, atan2(forward.x, forward.z))
 		if absf(yaw) > 0.83:
 			continue
-		var travel := absf(angle_difference(_stance.x, angle)) * STANCE_RADIUS
+		var travel := absf(angle_difference(_stance.x, angle)) * radius
 		var score := travel * 0.55 + absf(yaw) * 0.36 + maxf(setback - 1.5, 0.0) * 0.9
 		# Prefer the sides and the back so the beaver stays out of the player's view.
 		score += maxf(base.z - 0.4, 0.0) * 0.8
 		if best == null or score < best.cost:
 			best = ShotSetup.new()
-			best.stance = Vector3(angle, STANCE_RADIUS, yaw)
+			best.stance = Vector3(angle, radius, yaw)
 			best.arm = arm
 			best.cost = score
 	return best
@@ -316,7 +345,7 @@ func recover(direction := Vector3.ZERO) -> void:
 		_pose_tip(tip, rest_facing, 1.0 - t, t)
 		, 0.0, 1.0, 0.24).set_trans(Tween.TRANS_SINE)
 	await tween.finished
-	await _walk_to(Vector3(0.0, -_home.z, 0.0))
+	await _walk_to(_home_stance)
 	_busy = false
 	returned_to_stance.emit()
 
@@ -353,20 +382,30 @@ func _walk_to(goal: Vector3) -> void:
 		var before := maxf(stride_end - 1.0, 0.0) / stride_span
 		var after := minf(stride_end / stride_span, 1.0)
 		var reach := minf((stride_end + 0.50) / stride_span, 1.0)
-		var landing := _foot_at(moving, start.lerp(goal, reach))
+		var landing := _foot_at(moving, _walk_stance(start, goal, reach))
 		var stride := Vector2(float(i > 0), float(i < travel_steps))
 		var step_duration := duration if i < travel_steps else duration * 0.76
-		walk.tween_method(_step.bind(start.lerp(goal, before), start.lerp(goal, after),
+		walk.tween_method(_step.bind(start, goal, Vector2(before, after),
 			moving, planted[1 - moving], planted[moving], landing, stride), 0.0, 1.0, step_duration)
 		planted[moving] = landing
 		_next_foot = 1 - moving
 	await walk.finished
+	_stand_at(goal)
 	_rest()
 
 
-func _step(t: float, start: Vector3, end: Vector3, moving: int,
+func _walk_stance(start: Vector3, goal: Vector3, progress: float) -> Vector3:
+	var stance := start.lerp(goal, progress)
+	var turn := clampf((goal.x - start.x) * 1.4, -0.37, 0.37)
+	var weight := smoothstep(0.0, 0.28, progress) * (1.0 - smoothstep(0.72, 1.0, progress))
+	stance.y += 0.085 * weight
+	stance.z += turn * weight
+	return stance
+
+
+func _step(t: float, start: Vector3, goal: Vector3, progress: Vector2, moving: int,
 		support: Transform3D, takeoff: Transform3D, landing: Transform3D, stride: Vector2) -> void:
-	_stand_at(start.lerp(end, t))
+	_stand_at(_walk_stance(start, goal, lerpf(progress.x, progress.y, t)))
 	var lift := sin(PI * t)
 	var momentum := smoothstep(0.0, 1.0, lerpf(stride.x, stride.y, t))
 	var swing := takeoff.interpolate_with(landing, smoothstep(0.0, 1.0, t))
@@ -476,23 +515,34 @@ func _waist_motion() -> Transform3D:
 	return _rig.get_bone_global_pose(_waist) * _waist_rest_inverse
 
 
+func face_center() -> Vector3:
+	return (_eyes[0].global_position + _eyes[1].global_position) * 0.5 - Vector3.UP * 0.22
+
+
+func _hip_anchor() -> Vector3:
+	match opponent:
+		Opponent.BLUE:
+			return Vector3(1.66, 0.17, 0.59)
+		Opponent.CHEF:
+			return Vector3(1.83, 0.13, 0.63)
+	return Vector3(1.74, 0.13, 0.54)
+
+
 func _hip_wrist(index: int) -> Vector3:
-	var anchor := Vector3(1.52, 0.10, 0.43)
-	if _is_blue:
-		anchor = Vector3(1.31, 0.09, 0.19)
+	var anchor := _hip_anchor()
 	anchor.x *= _side_sign(index)
 	return _model.transform * _waist_motion() * (_model.transform.affine_inverse() * anchor)
 
 
 func _hip_facing(index: int) -> Vector3:
-	var tangent := Vector3(-0.52, 0.24, 0.82) if _is_blue else Vector3(-0.54, 0.27, 0.78)
-	tangent.x *= _side_sign(index)
+	var tangent := Vector3(-0.14 * _side_sign(index), -0.43, 0.89)
 	return (_waist_motion().basis * tangent).normalized()
 
 
 func _walking_wrist(index: int) -> Vector3:
 	var sway := sin(_clock * 2.1 + index * 0.55)
-	return Vector3(_side_sign(index) * 1.53, 0.372 + 0.014 * sway, 0.065 + 0.025 * sway)
+	return Vector3(_side_sign(index) * (_hip_anchor().x - 0.04), 0.31 + 0.014 * sway,
+		0.24 + 0.025 * sway)
 
 
 func _side_sign(index: int) -> float:
@@ -504,9 +554,9 @@ func _pose_arm(index: int, wrist: Vector3, facing: Vector3, extension_weight := 
 	var side := _side_sign(index)
 	var arm := _arms[index]
 	var hip_elbow := Vector3(side, 0.15, -0.18)
-	var hip_shoulder_drop := 0.44 if _is_blue else 0.45
-	var hip_upper_extension := 0.80 if _is_blue else 0.91
-	var hip_wrist_roll := 1.60
+	var hip_shoulder_drop := 0.29 if opponent == Opponent.BLUE else 0.36
+	var hip_upper_extension := 0.42 if opponent == Opponent.BLUE else 0.64
+	var hip_wrist_roll := 0.76
 	var clavicle_drop := -side * hip_weight * hip_shoulder_drop
 	_rotate_from_rest(_shoulders[index], Vector3(0.0, 0.0, clavicle_drop))
 	var shoulder := _rig.get_bone_global_pose(arm[Joint.UPPER]).origin

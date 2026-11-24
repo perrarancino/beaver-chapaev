@@ -37,6 +37,10 @@ _data = {
 
 [node name="WinterLodge" parent="." unique_id=883573728 instance=ExtResource("lodge")]
 
+[node name="Open pine shelf" parent="WinterLodge" index="39"]
+position = Vector3(4.44, -2.11, -5.4)
+rotation = Vector3(0, -1.35, 0)
+
 [node name="EmberEdge" parent="WinterLodge/Izba/MasonryStove" parent_id_path=PackedInt32Array(883573728, 1162843399) index="0" unique_id=1013545063]
 visible = false
 

@@ -5,6 +5,9 @@ const RADIUS := 0.155
 const HALF_HEIGHT := 0.068
 const PIXELS_PER_UNIT := 100.0
 const SLIDE_GRAVITY := 9.8
+const TABLE_FRICTION := 5.4
+const KNOCKOUT_PAUSE := 0.12
+const KNOCKOUT_FADE := 0.38
 const NORMAL_FRICTION := 0.24
 const ICE_FRICTION := 0.070
 const NORMAL_DAMP := 0.10
@@ -53,6 +56,7 @@ const ICON_DETAILS := {
 	Icon.RUBBER: "Сильно отскакивает от шашек и препятствий.",
 }
 const ICON_RADIUS := 0.101
+const ORDINARY_ICON_RADIUS := ICON_RADIUS * 0.70
 const ICON_DEPTH := 0.029
 const ICON_SEAT := 0.047
 const ICON_MODELS := {
@@ -109,7 +113,6 @@ const ICON_TEXTURES := {
 @export_enum("Light", "Dark") var side: int = 0
 @export var icon: Icon = Icon.NONE
 var falling := false
-var floor_time := 0.0
 var slot := -1
 var incoming_velocity := Vector3.ZERO
 var fuse := -1.0
@@ -129,6 +132,11 @@ var hovering := false:
 			wind_effect.set_instance_shader_parameter("wind_strength", 1.12 if hovering else 0.68)
 var hover_started_turn := -1
 var fall_velocity := Vector3.ZERO
+var _fall_spin := 0.0
+var _sliding_on_table := false
+var _knockout_rest := -1.0
+var _fade_materials: Array[BaseMaterial3D] = []
+var _fade_shader_parts: Array[MeshInstance3D] = []
 var stretch_tween: Tween
 var stretch_amount := 0.0
 @onready var planar_body: RigidBody2D = $PlanarBody
@@ -361,7 +369,8 @@ func _build_emblem() -> void:
 	var vertices: PackedVector3Array = emblem.mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
 	for vertex in vertices:
 		radius_squared = maxf(radius_squared, Vector2(vertex.x - center.x, vertex.y - center.y).length_squared())
-	var face_scale := ICON_RADIUS / sqrt(radius_squared)
+	var face_radius := ORDINARY_ICON_RADIUS if icon == Icon.NONE else ICON_RADIUS
+	var face_scale := face_radius / sqrt(radius_squared)
 	var depth_scale := ICON_DEPTH / bounds.size.z
 	# Imported emblems face +Z. Lay them face-up with the underside seated in the insert.
 	var basis := Basis(Vector3.RIGHT, -PI / 2.0).scaled(Vector3(face_scale, depth_scale, face_scale))
@@ -423,25 +432,94 @@ func shot_multiplier() -> float:
 		_: return 1.0
 
 
-func leave_board() -> void:
+func leave_board(outward: Vector3) -> void:
 	falling = true
+	show_turn_aura(false)
 	if wind_effect:
 		wind_effect.hide()
 	fall_velocity = linear_velocity
+	# A slow piece still tips clear of the raised board after its center crosses the edge.
+	fall_velocity += outward * maxf(1.18 - fall_velocity.dot(outward), 0.0)
+	_fall_spin = clampf(-planar_body.angular_velocity, -20.0, 20.0)
 	stop_motion()
 	planar_body.freeze = true
 	planar_body.collision_layer = 0
 	planar_body.collision_mask = 0
 
 
-func animate_fall(delta: float, floor_y: float) -> void:
-	if floor_time > 0.0:
-		floor_time += delta
-		return
-	fall_velocity.y -= SLIDE_GRAVITY * delta
-	var point := global_position + fall_velocity * delta
-	var floor_height := floor_y + HALF_HEIGHT
-	point.y = maxf(point.y, floor_height)
+func animate_fall(delta: float, table_y: float, table_radius: float, floor_y: float, room: Rect2) -> bool:
+	if _knockout_rest >= 0.0:
+		return _fade_knockout(delta)
+
+	var start := global_position
+	var tabletop := table_y + HALF_HEIGHT
+	var floor := floor_y + HALF_HEIGHT
+	var radius_squared := table_radius * table_radius
+	if not _sliding_on_table:
+		fall_velocity.y -= SLIDE_GRAVITY * delta
+	var point := start + fall_velocity * delta
+	if _sliding_on_table:
+		_sliding_on_table = Vector2(point.x, point.z).length_squared() <= radius_squared
+		if _sliding_on_table:
+			fall_velocity = fall_velocity.move_toward(Vector3.ZERO, TABLE_FRICTION * delta)
+			_fall_spin = move_toward(_fall_spin, 0.0, 20.0 * delta)
+			if fall_velocity.is_zero_approx() and is_zero_approx(_fall_spin):
+				_knockout_rest = 0.0
+	elif start.y >= tabletop and point.y < tabletop:
+		var contact := start.lerp(point, inverse_lerp(start.y, point.y, tabletop))
+		if Vector2(contact.x, contact.z).length_squared() <= radius_squared:
+			_sliding_on_table = true
+			fall_velocity = fall_velocity.slide(Vector3.UP) * 0.84
+			_fall_spin *= 0.62
+			point = contact
+	var wall_x := clampf(point.x, room.position.x + RADIUS, room.end.x - RADIUS)
+	var wall_z := clampf(point.z, room.position.y + RADIUS, room.end.y - RADIUS)
+	if wall_x != point.x:
+		point.x = wall_x
+		fall_velocity.x *= -0.25
+	if wall_z != point.z:
+		point.z = wall_z
+		fall_velocity.z *= -0.25
+	if point.y <= floor:
+		point.y = floor
+		_knockout_rest = 0.0
 	global_position = point
-	if point.y <= floor_height:
-		floor_time = delta
+	rotation.y += _fall_spin * delta
+	return false
+
+
+func _fade_knockout(delta: float) -> bool:
+	if _knockout_rest >= KNOCKOUT_PAUSE + KNOCKOUT_FADE:
+		return true
+	var previous := _knockout_rest
+	_knockout_rest += delta
+	if _knockout_rest < KNOCKOUT_PAUSE:
+		return false
+	if previous < KNOCKOUT_PAUSE:
+		for part: MeshInstance3D in visual.find_children("*", "MeshInstance3D", true, false):
+			if not part.is_visible_in_tree():
+				continue
+			if part.material_override is BaseMaterial3D:
+				var material := _make_fade_material(part.material_override)
+				part.material_override = material
+			elif part.material_override is ShaderMaterial:
+				_fade_shader_parts.append(part)
+			else:
+				for i in part.mesh.get_surface_count():
+					var base := part.get_active_material(i)
+					if base is BaseMaterial3D:
+						part.set_surface_override_material(i, _make_fade_material(base))
+
+	var opacity := 1.0 - smoothstep(KNOCKOUT_PAUSE, KNOCKOUT_PAUSE + KNOCKOUT_FADE, _knockout_rest)
+	for material in _fade_materials:
+		material.albedo_color.a = opacity
+	for part in _fade_shader_parts:
+		part.set_instance_shader_parameter("knockout_opacity", opacity)
+	return _knockout_rest >= KNOCKOUT_PAUSE + KNOCKOUT_FADE
+
+
+func _make_fade_material(base: BaseMaterial3D) -> BaseMaterial3D:
+	var material := base.duplicate() as BaseMaterial3D
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_HASH
+	_fade_materials.append(material)
+	return material

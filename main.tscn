@@ -9,8 +9,22 @@
 [ext_resource type="Script" uid="uid://5lje83w63i6o" path="res://game.gd" id="game"]
 [ext_resource type="PackedScene" uid="uid://bvf45jm16yfmn" path="res://assets/izba/river_lodge.tscn" id="izba"]
 [ext_resource type="PackedScene" path="res://piece_light.tscn" id="light_piece"]
-[ext_resource type="Texture2D" uid="uid://b68ocsmhhhy3i" path="res://assets/izba/materials/lodge/timber_color.webp" id="table_wood"]
-[ext_resource type="Texture2D" uid="uid://dahjasl0hauhi" path="res://assets/izba/materials/lodge/timber_normal.webp" id="table_wood_normal"]
+[ext_resource type="PackedScene" path="res://assets/table/round_table.fbx" id="round_table"]
+[ext_resource type="Shader" path="res://assets/table/board_contact_shadow.gdshader" id="board_contact_shadow"]
+[ext_resource type="AudioStream" path="res://assets/FX/audio/checker_hit.wav" id="checker_hit_audio"]
+[ext_resource type="AudioStream" path="res://assets/FX/audio/checker_explosion.wav" id="checker_explosion_audio"]
+[ext_resource type="AudioStream" path="res://assets/FX/audio/checker_lightning.wav" id="checker_lightning_audio"]
+[ext_resource type="AudioStream" path="res://assets/FX/audio/checker_ghost_touch.wav" id="checker_ghost_touch_audio"]
+
+[sub_resource type="AudioStreamRandomizer" id="checker_hit_pitch"]
+random_pitch = 1.1
+streams_count = 1
+stream_0/stream = ExtResource("checker_hit_audio")
+
+[sub_resource type="AudioStreamRandomizer" id="checker_ghost_touch_pitch"]
+random_pitch = 1.1
+streams_count = 1
+stream_0/stream = ExtResource("checker_ghost_touch_audio")
 
 [sub_resource type="Environment" id="env"]
 background_mode = 1
@@ -20,20 +34,13 @@ ambient_light_color = Color(0.57, 0.49, 0.41, 1)
 ambient_light_energy = 0.11
 tonemap_mode = 2
 
-[sub_resource type="StandardMaterial3D" id="frame"]
-albedo_color = Color(0.69, 0.54, 0.39, 1)
-albedo_texture = ExtResource("table_wood")
-roughness = 0.64
-normal_enabled = true
-normal_scale = 0.48
-normal_texture = ExtResource("table_wood_normal")
-uv1_triplanar = true
+[sub_resource type="ShaderMaterial" id="board_shadow_material"]
+shader = ExtResource("board_contact_shadow")
+render_priority = -3
 
-[sub_resource type="CylinderMesh" id="round_table"]
-top_radius = 1.98
-bottom_radius = 1.98
-height = 0.29
-radial_segments = 96
+[sub_resource type="PlaneMesh" id="board_shadow_mesh"]
+material = SubResource("board_shadow_material")
+size = Vector2(4.8, 5.55)
 
 [sub_resource type="ShaderMaterial" id="arrow_material"]
 resource_local_to_scene = true
@@ -50,6 +57,31 @@ size = Vector2(0.36, 1)
 [node name="Game" type="Node3D" unique_id=1128194104]
 physics_interpolation_mode = 2
 script = ExtResource("game")
+
+[node name="BackgroundMusic" type="AudioStreamPlayer" parent="."]
+
+[node name="CheckerSounds" type="Node" parent="."]
+
+[node name="Hit" type="AudioStreamPlayer" parent="CheckerSounds"]
+stream = SubResource("checker_hit_pitch")
+max_polyphony = 3
+playback_type = 1
+
+[node name="Explosion" type="AudioStreamPlayer" parent="CheckerSounds"]
+stream = ExtResource("checker_explosion_audio")
+volume_db = 3.0
+max_polyphony = 2
+
+[node name="Lightning" type="AudioStreamPlayer" parent="CheckerSounds"]
+stream = ExtResource("checker_lightning_audio")
+volume_db = -8.0
+max_polyphony = 2
+
+[node name="GhostTouch" type="AudioStreamPlayer" parent="CheckerSounds"]
+stream = SubResource("checker_ghost_touch_pitch")
+volume_db = 3.0
+max_polyphony = 2
+playback_type = 1
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=598146625]
 environment = SubResource("env")
@@ -89,19 +121,22 @@ spot_angle_attenuation = 0.65
 
 [node name="BoardPivot" type="Node3D" parent="." unique_id=321082817]
 
-[node name="Table" type="MeshInstance3D" parent="BoardPivot" unique_id=1151933504]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.277, 0)
-material_override = SubResource("frame")
-mesh = SubResource("round_table")
+[node name="Table" parent="BoardPivot" unique_id=1151933504 instance=ExtResource("round_table")]
+transform = Transform3D(2.992, 0, 0, 0, 3.16, 0, 0, 0, 2.992, 0, -0.35115, 0)
+
+[node name="BoardContactShadow" type="MeshInstance3D" parent="BoardPivot"]
+position = Vector3(0, -0.1305, 0)
+cast_shadow = 0
+mesh = SubResource("board_shadow_mesh")
 
 [node name="Board" parent="BoardPivot" unique_id=141650672 instance=ExtResource("board")]
 transform = Transform3D(1.06, 0, 0, 0, 1, 0, 0, 0, 1.06, 0, -0.132, 0)
 
 [node name="Izba" parent="." unique_id=1736883300 instance=ExtResource("izba")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.009428501, 0.0049607754, -0.00258708)
+transform = Transform3D(1.4, 0, 0, 0, 1, 0, 0, 0, 1.12, -0.009428501, 0.0049607754, -0.00258708)
 
 [node name="Beaver" type="Node3D" parent="." unique_id=483244909]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -4.19)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -4.37)
 script = ExtResource("beaver")
 
 [node name="Model" parent="Beaver" unique_id=1089378943 instance=ExtResource("beaver_model")]
@@ -164,11 +199,11 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.241884, 0.07, 1.413973)
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.241884, 0.07, 1.413973)
 
 [node name="Dark1" parent="StartingPieces" unique_id=1199599517 instance=ExtResource("dark_piece")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.347708, 0.07, -0.200749)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.73854, 0.07, -0.44514)
 icon = 1
 
 [node name="Dark2" parent="StartingPieces" unique_id=1626839063 instance=ExtResource("dark_piece")]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.347708, 0.07, -0.200749)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.73854, 0.07, -0.44514)
 
 [node name="Dark3" parent="StartingPieces" unique_id=1082614127 instance=ExtResource("dark_piece")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.952418, 0.07, -0.549879)

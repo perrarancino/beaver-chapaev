@@ -8,6 +8,7 @@ const RETURN_DURATION := 0.26
 const CLOSEUP_DURATION := HIT_DURATION - RETURN_DURATION
 const ORBIT_ANGLE := PI / 18.0
 var camera: Camera3D
+var room_bounds: Rect2
 var home: Transform3D
 var start: Transform3D
 var focus: Vector3
@@ -55,8 +56,11 @@ func fall(piece: Checker, board_center: Vector3) -> void:
 		_next_fall_frame()
 
 
-func waiting_for_camera(piece: Checker) -> bool:
-	return piece in waiting_falls
+func forget_fall(piece: Checker) -> void:
+	waiting_falls.erase(piece)
+	falling_pieces.erase(piece)
+	if mode == Mode.FALL and falling_pieces.is_empty():
+		_next_fall_frame()
 
 
 func _near_group(piece: Checker) -> bool:
@@ -104,6 +108,10 @@ func _frame_fall() -> void:
 		var half_angle := atan(tan(deg_to_rad(camera.fov * 0.5)) * minf(factor, 1.0))
 		distance = maxf(distance, (bounds.size.length() * 0.5 + Checker.RADIUS) / sin(half_angle))
 	offset = (side + Vector3.UP * 0.45).normalized() * distance
+	var eye := focus + offset
+	if not room_bounds.grow(-0.45).has_point(Vector2(eye.x, eye.z)):
+		# Look back toward the fallen piece from inside the room near a wall.
+		offset = (-side + Vector3.UP * 0.65).normalized() * distance
 
 
 func update(delta: float) -> void:

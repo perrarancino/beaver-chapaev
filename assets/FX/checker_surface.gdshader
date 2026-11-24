@@ -9,6 +9,7 @@ uniform float metal = 0.0;
 uniform bool has_normal = false;
 uniform bool blue_flame = false;
 uniform bool electric = false;
+instance uniform float knockout_opacity = 1.0;
 instance uniform bool is_rim = false;
 instance uniform vec3 part_offset = vec3(0.0);
 
@@ -37,6 +38,8 @@ float noise(vec2 point) {
 }
 
 void fragment() {
+	ALPHA = knockout_opacity;
+	ALPHA_HASH_SCALE = 1.0;
 	vec3 wood = base_color.rgb * texture(wood_texture, UV).rgb;
 	vec3 p = surface_point;
 	vec2 grain = p.xz + p.y * vec2(0.81, 0.67);

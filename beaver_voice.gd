@@ -10,6 +10,8 @@ const INTRO_LINE := "Дружок, пизда тебе щас будет, есл
 # https://huggingface.co/Ozzy-Helix/Neko_Arc_Neko_Aruku.RVCv2
 # Geralt conversion model by Meronix:
 # https://huggingface.co/Meronix/RVC/blob/694d5de5bccfd3bdd0ded4ddbc0cf89238b3e97d/Geralt.zip
+# Chef voice synthesized with Piper Denis (CC0 dataset), with pitch and timing adjusted.
+# https://huggingface.co/rhasspy/piper-voices/tree/main/ru/ru_RU/denis/medium
 const VOICES := [
 	{
 		&"intro": [
@@ -173,11 +175,92 @@ const VOICES := [
 			],
 		],
 	},
+	{
+		&"intro": [
+			[
+				"Я шеф Бобёр! Сегодня в меню шашки. Твои подам с хрустящей корочкой!",
+				preload("res://assets/beaver/voice/chef/intro_1.ogg"),
+				"0000026999755688668998655899974211000000000000026887899877888876678877887644489985432224532100000000000000258999854499645898765432227764346886545874358999878543321243210000000000000000",
+			],
+		],
+		&"aim": [
+			[
+				"Так, щепотку соли… и щёлк!",
+				preload("res://assets/beaver/voice/chef/aim_1.ogg"),
+				"0000004999755321022496448985324775448999888997433258886432210000000000000",
+			],
+			[
+				"Шашечку — на сковородочку!",
+				preload("res://assets/beaver/voice/chef/aim_2.ogg"),
+				"000001489975676442358766896427889999899856874221256532000000000000000",
+			],
+			[
+				"Сейчас будет фирменный шлепок!",
+				preload("res://assets/beaver/voice/chef/aim_3.ogg"),
+				"000001487569997556899768953215899887788877764246854437874322100000000000000",
+			],
+		],
+		&"own_lost": [
+			[
+				"Ай! Это же моя котлетка!",
+				preload("res://assets/beaver/voice/chef/own_lost_1.ogg"),
+				"0000025899987422100000000000047754698667866899999964358874347887432246421100000000000000",
+			],
+			[
+				"Кто пустил тебя на кухню?!",
+				preload("res://assets/beaver/voice/chef/own_lost_2.ogg"),
+				"00000049976436875434998643675579977895336885322455421000000000000000",
+			],
+			[
+				"Она ещё сырая была!",
+				preload("res://assets/beaver/voice/chef/own_lost_3.ogg"),
+				"000000257777899878865568643488889999996456886789864211000000000000000",
+			],
+		],
+		&"rival_lost": [
+			[
+				"На раздачу! Одна шашка готова!",
+				preload("res://assets/beaver/voice/chef/rival_lost_1.ogg"),
+				"0000002478999987546999643345421100000000000000029864688996458864325876569975436876656421100000000000000",
+			],
+			[
+				"Хрусть! Приятного аппетита!",
+				preload("res://assets/beaver/voice/chef/rival_lost_2.ogg"),
+				"000000039999954334210000000000015678899995447767996442466433566534662111000000000000000",
+			],
+			[
+				"Официант! Унесите тарелочку!",
+				preload("res://assets/beaver/voice/chef/rival_lost_3.ogg"),
+				"0000002687658753378999986542100000000000000146888986468875469644999988899999854421235321000000000000000",
+			],
+		],
+		&"win": [
+			[
+				"Шеф победил! Счёт за ужин на столе.",
+				preload("res://assets/beaver/voice/chef/win_1.ogg"),
+				"000000137898444499756886568998753211000000000000025899644789988776678788897421369986676521110000000000000",
+			],
+		],
+		&"lose": [
+			[
+				"Всё, увольняюсь! Ухожу печь сырники.",
+				preload("res://assets/beaver/voice/chef/lose_1.ogg"),
+				"000000249999975447877898788899999643210000000000000000368689998668984468876436887766554222342100000000000000000",
+			],
+		],
+		&"draw": [
+			[
+				"Ничья. Значит, делим последний пирожок!",
+				preload("res://assets/beaver/voice/chef/draw_1.ogg"),
+				"000002478998544578899863210000000000000000269987446866447899887652599543478985677752178889999545876422210000000000000",
+			],
+		],
+	},
 ]
 
 
 var _opponent := 0
-var _line_offsets: Array[Dictionary] = [{}, {}]
+var _line_offsets: Dictionary[int, Dictionary] = {}
 var _reactions: Array[StringName] = []
 var _envelope := ""
 
@@ -186,8 +269,8 @@ func _ready() -> void:
 	finished.connect(_on_finished)
 
 
-func select_opponent(is_blue: bool) -> void:
-	_opponent = 1 if is_blue else 0
+func select_opponent(index: int) -> void:
+	_opponent = index
 
 
 func speak(cue: StringName) -> void:
@@ -213,7 +296,7 @@ func react_to_knockout(own_piece: bool) -> void:
 
 func _play_line(cue: StringName) -> void:
 	var variants: Array = VOICES[_opponent][cue]
-	var offsets := _line_offsets[_opponent]
+	var offsets: Dictionary = _line_offsets.get_or_add(_opponent, {})
 	var index: int = offsets.get(cue, 0)
 	offsets[cue] = (index + 1) % variants.size()
 	var line: Array = variants[index]

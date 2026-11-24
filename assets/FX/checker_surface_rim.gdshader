@@ -5,6 +5,8 @@ uniform bool icy = false;
 uniform bool electric = false;
 uniform sampler2D arc_atlas : source_color, filter_linear, repeat_disable;
 
+instance uniform float knockout_opacity = 1.0;
+
 varying vec2 radial;
 varying float height;
 
@@ -37,4 +39,5 @@ void fragment() {
 		ALBEDO = mix(outer_color, core_color, smoothstep(0.16, 0.64, heat));
 		ALPHA = smoothstep(0.08, 0.38, height) * edge * (0.73 + 0.21 * variation);
 	}
+	ALPHA *= knockout_opacity;
 }

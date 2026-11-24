@@ -2,14 +2,24 @@ extends Node3D
 
 const Beaver := preload("res://beaver.gd")
 const Run := preload("res://checker_run.gd")
+const PlayerHand := preload("res://player_hand.gd")
 const LIGHT_PIECE := preload("res://piece_light.tscn")
 const DARK_PIECE := preload("res://piece_dark.tscn")
 const CheckerStrikeEffects := preload("res://assets/FX/checker_strike_effects.gd")
 const CheckerTrails := preload("res://assets/FX/checker_trails.gd")
 const CheckerBlast := preload("res://assets/FX/checker_blast.gd")
+const MUSIC_TRACKS: Array[AudioStream] = [
+	preload("res://assets/music/khitryi_umysel.mp3"),
+	preload("res://assets/music/balalaechnyi_manevr.mp3"),
+	preload("res://assets/music/nochnoi_tropar.mp3"),
+	preload("res://assets/music/tainaya_zasada.mp3"),
+]
 const BOARD_APOTHEM := 2.143
 const BOARD_TOP := 0.003
+const TABLE_TOP := -0.132
+const TABLE_RADIUS := 2.86
 const FLOOR_Y := -2.1
+const ROOM_FLOOR := Rect2(-7.50, -9.30, 14.98, 16.72)
 const PIECE_Y := 0.07
 const TURN_REST_TIME := 0.35
 const CAMERA_SCROLL_STEP := 0.125
@@ -24,6 +34,7 @@ const GHOST_LANDING_CLEARANCE := Checker.RADIUS * 2.0 + 0.008
 const SHOT_IMPULSE := 3.0
 const DRAG_DEAD_ZONE := 12.0
 const MAX_PULL_STRENGTH := 2.8
+const HAND_HOVER_CEILING := 3.6
 const EDGE_NORMALS := [
 	Vector3(1, 0, 0), Vector3(0.5, 0, 0.8660254), Vector3(-0.5, 0, 0.8660254),
 	Vector3(-1, 0, 0), Vector3(-0.5, 0, -0.8660254), Vector3(0.5, 0, -0.8660254),
@@ -55,6 +66,8 @@ var phasing_piece: Checker
 var ghost_previous_position := Vector2.ZERO
 var ghost_contacts: Array[Checker] = []
 var action_camera := preload("res://checker_action_camera.gd").new()
+var player_hand := PlayerHand.new()
+var hand_waiting_for_motion := false
 var camera: Camera3D
 var beaver_camera_transform: Transform3D
 var board_camera_transform: Transform3D
@@ -78,6 +91,12 @@ var checker_trails := CheckerTrails.new()
 var blast_effects := Node3D.new()
 var rng := RandomNumberGenerator.new()
 var orbiting := false
+var music_queue: Array[AudioStream] = []
+@onready var background_music: AudioStreamPlayer = $BackgroundMusic
+@onready var checker_hit_sound: AudioStreamPlayer = $CheckerSounds/Hit
+@onready var checker_explosion_sound: AudioStreamPlayer = $CheckerSounds/Explosion
+@onready var checker_lightning_sound: AudioStreamPlayer = $CheckerSounds/Lightning
+@onready var checker_ghost_touch_sound: AudioStreamPlayer = $CheckerSounds/GhostTouch
 @onready var board_pivot: Node3D = $BoardPivot
 @onready var beaver: Beaver = $Beaver
 @onready var beaver_voice = $Beaver/Voice
@@ -87,8 +106,12 @@ var orbiting := false
 func _ready() -> void:
 	rng.randomize()
 	_start_lamp_flicker()
+	background_music.volume_db = linear_to_db(0.2)
+	background_music.playback_type = AudioServer.PLAYBACK_TYPE_STREAM
+	background_music.finished.connect(_play_next_music_track)
 	camera = $Camera3D
 	action_camera.camera = camera
+	action_camera.room_bounds = ROOM_FLOOR
 	beaver_camera_transform = camera.transform
 	board_camera_transform = Transform3D(Basis.IDENTITY, BOARD_CAMERA_POSITION).looking_at(
 		Vector3(0.0, BOARD_TOP, 0.0))
@@ -98,6 +121,8 @@ func _ready() -> void:
 			mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_build_ui()
 	_build_preview()
+	player_hand.name = &"PlayerHand"
+	add_child(player_hand)
 	board_pivot.add_child(checker_trails)
 	checker_trails.board_height = BOARD_TOP
 	checker_trails.board_material.set_shader_parameter("apothem", BOARD_APOTHEM)
@@ -215,11 +240,27 @@ func _set_master_volume(percent: float) -> void:
 	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(percent / 100.0, 0.001)))
 	AudioServer.set_bus_mute(0, is_zero_approx(percent))
 
+func _start_background_music() -> void:
+	if background_music.stream == null:
+		_play_next_music_track()
+
+func _play_next_music_track() -> void:
+	if music_queue.is_empty():
+		music_queue.assign(MUSIC_TRACKS)
+		music_queue.shuffle()
+		# The first track drawn after a reshuffle must differ from the last one played.
+		if music_queue.back() == background_music.stream:
+			music_queue.push_front(music_queue.pop_back())
+	background_music.stream = music_queue.pop_back()
+	background_music.play()
+
 func _play_intro() -> void:
 	if phase != "intro":
 		return
-	camera.transform = Transform3D(Basis.IDENTITY, INTRO_CAMERA_POSITION).looking_at(
-		beaver.position + Vector3(0.0, 1.68, 0.0))
+	var camera_position := INTRO_CAMERA_POSITION
+	if beaver.opponent == Beaver.Opponent.CHEF:
+		camera_position.z += 0.70
+	camera.transform = Transform3D(Basis.IDENTITY, camera_position).looking_at(beaver.face_center())
 	beaver.addressing_player = true
 	if OS.has_feature("web"):
 		# Browsers need a player gesture to unlock audio.
@@ -240,6 +281,7 @@ func _play_intro() -> void:
 		_speak_intro()
 
 func _speak_intro() -> void:
+	_start_background_music()
 	await beaver_voice.speak(&"intro")
 	if phase != "intro":
 		return
@@ -256,6 +298,7 @@ func _finish_intro() -> void:
 	_start_run()
 
 func _skip_intro() -> void:
+	_start_background_music()
 	if intro_transition and intro_transition.is_running():
 		intro_transition.kill()
 	_finish_intro()
@@ -398,6 +441,9 @@ func _input(event: InputEvent) -> void:
 		return
 	# A drag that started on the board can end over the volume control.
 	if event is InputEventMouseMotion:
+		if hand_waiting_for_motion and _is_player_turn() and action_camera.mode == action_camera.Mode.IDLE \
+				and not event.relative.is_zero_approx():
+			hand_waiting_for_motion = false
 		if orbiting:
 			if (event.button_mask & MOUSE_BUTTON_MASK_LEFT) == 0:
 				_finish_board_rotation()
@@ -415,7 +461,7 @@ func _input(event: InputEvent) -> void:
 			var offset := strike_offset
 			_cancel_aim()
 			if not shot.is_zero_approx():
-				_shoot(piece, shot.normalized(), shot.length(), offset)
+				_player_flick(piece, shot, offset)
 		else:
 			return
 		get_viewport().set_input_as_handled()
@@ -440,12 +486,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		camera_view_target = clampf(camera_view_target + direction * steps * CAMERA_SCROLL_STEP, 0.0, 1.0)
 		get_viewport().set_input_as_handled()
 		return
-	if not _is_player_turn() or aiming or orbiting: return
+	if not _is_player_turn() or action_camera.mode != action_camera.Mode.IDLE or aiming or orbiting:
+		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		var ray_start := camera.project_ray_origin(event.position)
 		var hit := _piece_hit(event.position)
 		var picked := hit.get("collider") as Checker
 		if picked and picked.side == 0:
+			hand_waiting_for_motion = false
 			selected = picked
 			picked.set_turn_aura_selected(true)
 			drag_start = event.position
@@ -630,10 +678,10 @@ func _finish_board_rotation() -> void:
 		piece.reset_physics_interpolation()
 
 func _is_table_drag(ray_start: Vector3, ray_direction: Vector3) -> bool:
-	var hit = Plane(Vector3.UP, -0.35).intersects_ray(ray_start, ray_direction)
+	var hit = Plane(Vector3.UP, TABLE_TOP).intersects_ray(ray_start, ray_direction)
 	if hit == null:
 		return false
-	return hit.z > 0.5 and Vector2(hit.x, hit.z).length() <= 2.7
+	return hit.z > 0.5 and Vector2(hit.x, hit.z).length_squared() <= TABLE_RADIUS * TABLE_RADIUS
 
 func _pull_strength(drag: Vector2) -> float:
 	if drag.length() < 0.001:
@@ -664,6 +712,61 @@ func _aim_vector(cursor: Vector2) -> Vector3:
 	if hit == null:
 		return Vector3.ZERO
 	return origin.direction_to(hit) * _pull_strength(drag)
+
+func _update_player_hand(delta: float) -> void:
+	if action_camera.mode != action_camera.Mode.IDLE:
+		player_hand.hide()
+		return
+	var cursor := get_viewport().get_mouse_position()
+	var bounds := get_viewport().get_visible_rect()
+	if not _is_player_turn() or hand_waiting_for_motion or orbiting or not bounds.has_point(cursor) \
+			or (not aiming and volume_control.get_global_rect().has_point(cursor)):
+		player_hand.withdraw()
+		return
+
+	var facing := (-camera.global_basis.z).slide(Vector3.UP).normalized()
+	if aiming:
+		var shot := _aim_vector(cursor)
+		if not shot.is_zero_approx():
+			facing = shot.normalized()
+			var power := shot.length() / MAX_PULL_STRENGTH
+			var contact := _player_finger_contact(selected, facing, strike_offset)
+			player_hand.aim(delta, contact, facing, power)
+			return
+
+	var ray_start := camera.project_ray_origin(cursor)
+	var ray_direction := camera.project_ray_normal(cursor)
+	var hover_hit: Variant = Plane(Vector3.UP, BOARD_TOP + PlayerHand.HOVER_HEIGHT) \
+		.intersects_ray(ray_start, ray_direction)
+	# Keep the hand on the cursor ray even when it points above the tabletop.
+	var depth := -camera.to_local(board_pivot.global_position).z + BOARD_APOTHEM
+	if hover_hit != null:
+		depth = minf(depth, -camera.to_local(hover_hit).z)
+	var target := camera.project_position(cursor, depth)
+	if target.y > HAND_HOVER_CEILING and ray_start.y < HAND_HOVER_CEILING:
+		target = ray_start.lerp(target, inverse_lerp(ray_start.y, target.y, HAND_HOVER_CEILING))
+	player_hand.follow(delta, target, facing)
+
+
+func _player_finger_contact(piece: Checker, direction: Vector3, offset: Vector3) -> Vector3:
+	var lateral := offset.slide(direction).limit_length(Checker.RADIUS * 0.75)
+	var depth := sqrt(Checker.RADIUS * Checker.RADIUS - lateral.length_squared())
+	return piece.global_position + lateral - direction * depth + Vector3.UP * 0.035
+
+
+func _player_flick(piece: Checker, shot: Vector3, offset: Vector3) -> void:
+	hand_waiting_for_motion = true
+	phase = "player_strike"
+	var direction := shot.normalized()
+	var strength := shot.length()
+	await player_hand.flick(_player_finger_contact(piece, direction, offset), direction,
+		strength / MAX_PULL_STRENGTH)
+	player_hand.recover(direction)
+	if is_instance_valid(piece) and not piece.is_queued_for_deletion():
+		_shoot(piece, direction, strength, offset)
+	else:
+		phase = "aim"
+
 
 func _shoot(piece: Checker, direction: Vector3, strength: float, offset := Vector3.ZERO) -> void:
 	_begin_shot_resolution()
@@ -727,6 +830,7 @@ func _resolve_ghost_contacts() -> void:
 		var nearest := Geometry2D.get_closest_point_to_segment(center, ghost_previous_position, point)
 		if center.distance_squared_to(nearest) <= radius * radius:
 			ghost_contacts.append(other)
+			checker_ghost_touch_sound.play()
 			_trigger_contact(other, phasing_piece)
 	ghost_previous_position = point
 
@@ -740,6 +844,7 @@ func _touch(a: Checker, b: Checker, normal: Vector3) -> void:
 	var b_speed := -b.incoming_velocity.dot(normal)
 	var closing_speed := a_speed + b_speed
 	if closing_speed > 0.32:
+		checker_hit_sound.play()
 		var a_struck := a_speed >= b_speed
 		var intensity := clampf(closing_speed / 4.7, 0.08, 1.0)
 		var contact_point := a.position.lerp(b.position, 0.5)
@@ -816,6 +921,7 @@ func _explode(bomb: Checker) -> void:
 	blast.position = board_pivot.to_local(center) + Vector3.UP * 0.038
 	blast.rotation.y = bomb.rotation.y
 	blast_effects.add_child(blast)
+	checker_explosion_sound.play()
 	for piece in pieces:
 		if piece == bomb or piece.falling or piece.is_intangible():
 			continue
@@ -830,6 +936,8 @@ func _lightning_hop(chain: Dictionary) -> bool:
 		target = _find_lightning_target(chain.origin, chain.side, chain.seen)
 	if not target:
 		return false
+	if chain.seen.is_empty():
+		checker_lightning_sound.play()
 	var endpoint := _on_board(target.global_position)
 	var bolt_height := Vector3.UP * 0.08
 	strike_effects.lightning_arc(board_pivot.to_local(chain.visual_origin + bolt_height),
@@ -861,6 +969,7 @@ func _find_lightning_target(origin: Vector3, source_side: int, seen: Array) -> C
 
 func _process(delta: float) -> void:
 	_update_camera(delta)
+	_update_player_hand(delta)
 	checker_trails.update_trails(delta, pieces, phase == "moving")
 	strike_effects.tick(delta)
 	var armed: Array[Checker] = []
@@ -923,7 +1032,14 @@ func _eliminate(piece: Checker) -> void:
 		if piece in links[i].bodies:
 			_release_link(i)
 	piece.fuse_origin = piece.global_position
-	piece.leave_board()
+	var outward := Vector3.ZERO
+	if not _is_outside_board(piece.position, -Checker.RADIUS - 0.015):
+		var nearest_edge: Vector3 = EDGE_NORMALS[0]
+		for normal: Vector3 in EDGE_NORMALS:
+			if piece.position.dot(normal) > piece.position.dot(nearest_edge):
+				nearest_edge = normal
+		outward = board_pivot.global_basis * nearest_edge
+	piece.leave_board(outward)
 	action_camera.fall(piece, board_pivot.global_position)
 	if not shot_knockouts[piece.side]:
 		shot_knockouts[piece.side] = true
@@ -951,14 +1067,14 @@ func _physics_process(delta: float) -> void:
 				var height := PIECE_Y + (FLOAT_HEIGHT if p.hovering else 0.0)
 				p.global_position.y = move_toward(p.global_position.y, height, FLOAT_LIFT_SPEED * delta)
 		if p.falling:
-			if action_camera.waiting_for_camera(p):
-				falling = true
-				continue
-			p.animate_fall(delta, FLOOR_Y)
-			if p.floor_time >= 0.22 and p.fuse < 0.0:
-				pieces.remove_at(i)
-				p.queue_free()
-				continue
+			if p.animate_fall(delta, TABLE_TOP, TABLE_RADIUS, FLOOR_Y, ROOM_FLOOR):
+				if p.visible:
+					p.hide()
+					action_camera.forget_fall(p)
+				if p.fuse < 0.0:
+					pieces.remove_at(i)
+					p.queue_free()
+					continue
 			falling = true
 		else:
 			p.incoming_velocity = p.linear_velocity

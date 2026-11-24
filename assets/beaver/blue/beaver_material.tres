@@ -9,7 +9,4 @@ render_priority = 0
 shader = ExtResource("face")
 shader_parameter/albedo_texture = ExtResource("albedo")
 shader_parameter/normal_texture = ExtResource("normal")
-shader_parameter/mouth_center = Vector2(768, 724)
-shader_parameter/mouth_axis = Vector2(0, 1)
-shader_parameter/jaw_open = 0.0
 shader_parameter/normal_strength = 1.0
