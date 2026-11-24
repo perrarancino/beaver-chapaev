@@ -55,6 +55,7 @@ var rest_poses: Dictionary[Checker, Transform3D] = {}
 var phasing_piece: Checker
 var ghost_previous_position := Vector2.ZERO
 var ghost_contacts: Array[Checker] = []
+var action_camera := preload("res://checker_action_camera.gd").new()
 var camera: Camera3D
 var beaver_camera_transform: Transform3D
 var board_camera_transform: Transform3D
@@ -87,6 +88,7 @@ var orbiting := false
 func _ready() -> void:
 	rng.randomize()
 	camera = $Camera3D
+	action_camera.camera = camera
 	beaver_camera_transform = camera.transform
 	board_camera_transform = Transform3D(Basis.IDENTITY, BOARD_CAMERA_POSITION).looking_at(
 		Vector3(0.0, BOARD_TOP, 0.0))
@@ -97,6 +99,8 @@ func _ready() -> void:
 	_build_ui()
 	_build_preview()
 	board_pivot.add_child(checker_trails)
+	checker_trails.board_height = BOARD_TOP
+	checker_trails.board_material.set_shader_parameter("apothem", BOARD_APOTHEM)
 	board_pivot.add_child(strike_effects)
 	board_pivot.add_child(blast_effects)
 	beaver_voice.subtitle_changed.connect(_set_beaver_subtitle)
@@ -300,7 +304,14 @@ func _set_beaver_subtitle(text: String) -> void:
 	beaver_subtitle.text = "" if text.is_empty() else "«%s»" % text
 
 
+func _exit_tree() -> void:
+	action_camera.restore()
+
+
 func _update_camera(delta: float) -> void:
+	if action_camera.mode != action_camera.Mode.IDLE:
+		action_camera.update(delta)
+		return
 	if camera_view == camera_view_target:
 		return
 	camera_view = lerpf(camera_view, camera_view_target, 1.0 - exp(-CAMERA_SCROLL_SPEED * delta))
@@ -312,6 +323,7 @@ func _update_camera(delta: float) -> void:
 
 
 func _new_round() -> void:
+	action_camera.new_shot()
 	_end_player_drag()
 	_clear_links()
 	phasing_piece = null
@@ -351,6 +363,11 @@ func _make_piece(side: int, icon: Checker.Icon, pos: Vector3, slot: int) -> Chec
 	return body
 
 func _input(event: InputEvent) -> void:
+	if action_camera.mode != action_camera.Mode.IDLE and event is InputEventKey and event.keycode == KEY_SPACE and event.pressed:
+		get_viewport().set_input_as_handled()
+		if not event.echo:
+			action_camera.skip()
+		return
 	if phase == "intro" and event is InputEventKey and event.keycode == KEY_SPACE and event.pressed:
 		get_viewport().set_input_as_handled()
 		if not event.echo:
@@ -634,6 +651,7 @@ func _shoot(piece: Checker, direction: Vector3, strength: float, offset := Vecto
 	piece.stretch_on_impact(direction, intensity)
 
 func _begin_shot_resolution() -> void:
+	action_camera.new_shot()
 	phase = "moving"
 	shot_knockouts.fill(false)
 	for piece in pieces:
@@ -707,6 +725,12 @@ func _touch(a: Checker, b: Checker, normal: Vector3) -> void:
 	if closing_speed > 0.32:
 		var a_struck := a_speed >= b_speed
 		var intensity := clampf(closing_speed / 4.7, 0.08, 1.0)
+		var contact_point := a.position.lerp(b.position, 0.5)
+		action_camera.hit(board_pivot.to_global(contact_point))
+		var icon := a.icon if a_struck else b.icon
+		if not strike_effects.element_planes.has(icon):
+			icon = b.icon if a_struck else a.icon
+		strike_effects.impact(contact_point, board_pivot.global_basis.inverse() * normal, intensity, icon)
 		a.stretch_on_impact(normal, intensity * (0.72 if a_struck else 1.0))
 		b.stretch_on_impact(normal, intensity * (1.0 if a_struck else 0.72))
 	_trigger_contact(a, b)
@@ -793,6 +817,8 @@ func _lightning_hop(chain: Dictionary) -> bool:
 	var bolt_height := Vector3.UP * 0.08
 	strike_effects.lightning_arc(board_pivot.to_local(chain.visual_origin + bolt_height),
 		board_pivot.to_local(target.global_position + bolt_height))
+	var hop_direction: Vector3 = board_pivot.global_basis.inverse() * (endpoint - chain.origin)
+	strike_effects.impact(target.position, hop_direction, 0.3, Checker.Icon.LIGHTNING, true)
 	var source: Checker = chain.source if is_instance_valid(chain.source) else null
 	_push(target, (endpoint - chain.origin).normalized() * 0.56, source)
 	chain.seen.append(target)
@@ -882,6 +908,7 @@ func _eliminate(piece: Checker) -> void:
 			_release_link(i)
 	piece.fuse_origin = piece.global_position
 	piece.leave_board()
+	action_camera.fall(piece, board_pivot.global_position)
 	if not shot_knockouts[piece.side]:
 		shot_knockouts[piece.side] = true
 		beaver_voice.react_to_knockout(piece.side == 1)
@@ -948,6 +975,9 @@ func _physics_process(delta: float) -> void:
 				var height := PIECE_Y + (FLOAT_HEIGHT if p.hovering else 0.0)
 				p.global_position.y = move_toward(p.global_position.y, height, FLOAT_LIFT_SPEED * delta)
 		if p.falling:
+			if action_camera.waiting_for_camera(p):
+				falling = true
+				continue
 			p.animate_fall(delta, FLOOR_Y)
 			if p.floor_time >= 0.22 and p.fuse < 0.0:
 				pieces.remove_at(i)
@@ -965,7 +995,7 @@ func _physics_process(delta: float) -> void:
 		_reset_stillness()
 		return
 	still_time += delta
-	if still_time < TURN_REST_TIME:
+	if still_time < TURN_REST_TIME or action_camera.mode != action_camera.Mode.IDLE:
 		return
 	if _expire_hovering():
 		_reset_stillness()
@@ -1047,6 +1077,7 @@ func _materialize_ghost() -> void:
 	ghost_contacts.clear()
 
 func _finish_shot() -> void:
+	action_camera.restore()
 	run.finish_turn()
 	contacts.clear()
 	var counts := [0, 0]

@@ -1,0 +1,11 @@
+[gd_resource type="PlaneMesh" format=3 uid="uid://cfem0l0rpatbh"]
+
+[ext_resource type="Shader" uid="uid://lw5o7xquofo5" path="res://assets/FX/checker_impact.gdshader" id="1"]
+
+[sub_resource type="ShaderMaterial" id="Impact"]
+render_priority = 0
+shader = ExtResource("1")
+
+[resource]
+material = SubResource("Impact")
+size = Vector2(1, 1)
