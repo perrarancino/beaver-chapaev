@@ -122,15 +122,28 @@ var fuse_origin := Vector3.ZERO
 var lightning_used := false
 var ghost_spent := false
 var solid_materials: Dictionary[MeshInstance3D, Material] = {}
+var glued := false:
+	set(value):
+		glued = value
+		if glued:
+			if stretch_tween and stretch_tween.is_running():
+				stretch_tween.kill()
+			stretch_amount = 0.0
+			visual.basis = Basis.IDENTITY
 var float_used := false
 var wind_effect: MeshInstance3D
+var wind_lift := 0.0
+var wind_transition: Tween
 var hovering := false:
 	set(value):
 		if hovering == value:
 			return
 		hovering = value
 		if wind_effect:
-			wind_effect.set_instance_shader_parameter("wind_strength", 1.12 if hovering else 0.68)
+			if wind_transition and wind_transition.is_running():
+				wind_transition.kill()
+			wind_transition = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
+			wind_transition.tween_method(_set_wind_lift, wind_lift, float(hovering), 0.20)
 var hover_started_turn := -1
 var fall_velocity := Vector3.ZERO
 var _fall_spin := 0.0
@@ -235,6 +248,8 @@ func set_turn_aura_selected(active: bool) -> void:
 
 
 func stretch_on_impact(world_direction: Vector3, strength: float) -> void:
+	if glued:
+		return
 	var peak := lerpf(0.19, 0.49, clampf(strength, 0.0, 1.0))
 	if stretch_amount > peak:
 		return
@@ -356,9 +371,15 @@ func _add_wind() -> void:
 	wind_effect = MeshInstance3D.new()
 	wind_effect.name = "WindVortex"
 	wind_effect.mesh = wind_mesh
+	wind_effect.custom_aabb = AABB(Vector3(-0.47, -0.51, -0.47), Vector3(0.94, 0.74, 0.94))
 	wind_effect.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	wind_effect.position.y = 0.055
-	visual.add_child(wind_effect)
+	add_child(wind_effect)
+
+
+func _set_wind_lift(amount: float) -> void:
+	wind_lift = amount
+	wind_effect.set_instance_shader_parameter("hover_amount", amount)
 
 
 func _build_emblem() -> void:

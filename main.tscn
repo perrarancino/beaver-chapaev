@@ -5,16 +5,17 @@
 [ext_resource type="PackedScene" uid="uid://5q3aevj4vh6p" path="res://assets/beaver/beaver.glb" id="beaver_model"]
 [ext_resource type="Script" uid="uid://bwgvrarpwbtj8" path="res://beaver_voice.gd" id="beaver_voice"]
 [ext_resource type="PackedScene" uid="uid://b8bn0ti6qf7qq" path="res://assets/boards/three_player_board.glb" id="board"]
+[ext_resource type="Shader" uid="uid://b1wgn4ctlvh17" path="res://assets/table/board_contact_shadow.gdshader" id="board_contact_shadow"]
+[ext_resource type="AudioStream" uid="uid://jaw07lv70x3y" path="res://assets/FX/audio/checker_explosion.wav" id="checker_explosion_audio"]
+[ext_resource type="AudioStream" uid="uid://deh6ft48rfac8" path="res://assets/FX/audio/checker_ghost_touch.wav" id="checker_ghost_touch_audio"]
+[ext_resource type="AudioStream" uid="uid://5ydy4qo6mscs" path="res://assets/FX/audio/checker_hit.wav" id="checker_hit_audio"]
+[ext_resource type="AudioStream" uid="uid://d1butmrghr7op" path="res://assets/FX/audio/checker_lightning.wav" id="checker_lightning_audio"]
+[ext_resource type="AudioStream" path="res://assets/FX/audio/checker_strike.wav" id="checker_strike_audio"]
 [ext_resource type="PackedScene" path="res://piece_dark.tscn" id="dark_piece"]
 [ext_resource type="Script" uid="uid://5lje83w63i6o" path="res://game.gd" id="game"]
 [ext_resource type="PackedScene" uid="uid://bvf45jm16yfmn" path="res://assets/izba/river_lodge.tscn" id="izba"]
 [ext_resource type="PackedScene" path="res://piece_light.tscn" id="light_piece"]
-[ext_resource type="PackedScene" path="res://assets/table/round_table.fbx" id="round_table"]
-[ext_resource type="Shader" path="res://assets/table/board_contact_shadow.gdshader" id="board_contact_shadow"]
-[ext_resource type="AudioStream" path="res://assets/FX/audio/checker_hit.wav" id="checker_hit_audio"]
-[ext_resource type="AudioStream" path="res://assets/FX/audio/checker_explosion.wav" id="checker_explosion_audio"]
-[ext_resource type="AudioStream" path="res://assets/FX/audio/checker_lightning.wav" id="checker_lightning_audio"]
-[ext_resource type="AudioStream" path="res://assets/FX/audio/checker_ghost_touch.wav" id="checker_ghost_touch_audio"]
+[ext_resource type="PackedScene" uid="uid://du371d8bukkmy" path="res://assets/table/round_table.fbx" id="round_table"]
 
 [sub_resource type="AudioStreamRandomizer" id="checker_hit_pitch"]
 random_pitch = 1.1
@@ -35,8 +36,8 @@ ambient_light_energy = 0.11
 tonemap_mode = 2
 
 [sub_resource type="ShaderMaterial" id="board_shadow_material"]
-shader = ExtResource("board_contact_shadow")
 render_priority = -3
+shader = ExtResource("board_contact_shadow")
 
 [sub_resource type="PlaneMesh" id="board_shadow_mesh"]
 material = SubResource("board_shadow_material")
@@ -47,9 +48,6 @@ resource_local_to_scene = true
 render_priority = 100
 shader = ExtResource("aim_arrow")
 shader_parameter/arrow_length = 1.0
-shader_parameter/edge_color = Color(0.035, 0.18, 0.2, 1)
-shader_parameter/shaft_color = Color(0.27, 0.78, 0.73, 1)
-shader_parameter/tip_color = Color(0.76, 1, 0.94, 1)
 
 [sub_resource type="PlaneMesh" id="arrow_plane"]
 size = Vector2(0.36, 1)
@@ -58,26 +56,31 @@ size = Vector2(0.36, 1)
 physics_interpolation_mode = 2
 script = ExtResource("game")
 
-[node name="BackgroundMusic" type="AudioStreamPlayer" parent="."]
+[node name="BackgroundMusic" type="AudioStreamPlayer" parent="." unique_id=823778816]
 
-[node name="CheckerSounds" type="Node" parent="."]
+[node name="CheckerSounds" type="Node" parent="." unique_id=1686456313]
 
-[node name="Hit" type="AudioStreamPlayer" parent="CheckerSounds"]
+[node name="Strike" type="AudioStreamPlayer" parent="CheckerSounds"]
+stream = ExtResource("checker_strike_audio")
+volume_db = 4.5
+playback_type = 1
+
+[node name="Hit" type="AudioStreamPlayer" parent="CheckerSounds" unique_id=755456596]
 stream = SubResource("checker_hit_pitch")
 max_polyphony = 3
 playback_type = 1
 
-[node name="Explosion" type="AudioStreamPlayer" parent="CheckerSounds"]
+[node name="Explosion" type="AudioStreamPlayer" parent="CheckerSounds" unique_id=1611646717]
 stream = ExtResource("checker_explosion_audio")
 volume_db = 3.0
 max_polyphony = 2
 
-[node name="Lightning" type="AudioStreamPlayer" parent="CheckerSounds"]
+[node name="Lightning" type="AudioStreamPlayer" parent="CheckerSounds" unique_id=1872395752]
 stream = ExtResource("checker_lightning_audio")
 volume_db = -8.0
 max_polyphony = 2
 
-[node name="GhostTouch" type="AudioStreamPlayer" parent="CheckerSounds"]
+[node name="GhostTouch" type="AudioStreamPlayer" parent="CheckerSounds" unique_id=685251470]
 stream = SubResource("checker_ghost_touch_pitch")
 volume_db = 3.0
 max_polyphony = 2
@@ -124,8 +127,8 @@ spot_angle_attenuation = 0.65
 [node name="Table" parent="BoardPivot" unique_id=1151933504 instance=ExtResource("round_table")]
 transform = Transform3D(2.992, 0, 0, 0, 3.16, 0, 0, 0, 2.992, 0, -0.35115, 0)
 
-[node name="BoardContactShadow" type="MeshInstance3D" parent="BoardPivot"]
-position = Vector3(0, -0.1305, 0)
+[node name="BoardContactShadow" type="MeshInstance3D" parent="BoardPivot" unique_id=422928002]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1305, 0)
 cast_shadow = 0
 mesh = SubResource("board_shadow_mesh")
 
@@ -140,7 +143,7 @@ transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -4.37)
 script = ExtResource("beaver")
 
 [node name="Model" parent="Beaver" unique_id=1089378943 instance=ExtResource("beaver_model")]
-transform = Transform3D(3.3, 0, 0, 0, 3.3, 0, 0, 0, 3.3, 0, 0.84283, 0)
+transform = Transform3D(3.3, 0, 0, 0, 3.3, 0, 0, 0, 3.3, 0, 0.99883, 0)
 
 [node name="Voice" type="AudioStreamPlayer" parent="Beaver" unique_id=1789224376]
 volume_db = -4.0

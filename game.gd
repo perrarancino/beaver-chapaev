@@ -8,6 +8,7 @@ const DARK_PIECE := preload("res://piece_dark.tscn")
 const CheckerStrikeEffects := preload("res://assets/FX/checker_strike_effects.gd")
 const CheckerTrails := preload("res://assets/FX/checker_trails.gd")
 const CheckerBlast := preload("res://assets/FX/checker_blast.gd")
+const STICKY_SLIME_SHADER := preload("res://assets/FX/checker_sticky_slime.gdshader")
 const MUSIC_TRACKS: Array[AudioStream] = [
 	preload("res://assets/music/khitryi_umysel.mp3"),
 	preload("res://assets/music/balalaechnyi_manevr.mp3"),
@@ -33,6 +34,7 @@ const FLOAT_LIFT_SPEED := 1.35
 const GHOST_LANDING_CLEARANCE := Checker.RADIUS * 2.0 + 0.008
 const SHOT_IMPULSE := 3.0
 const DRAG_DEAD_ZONE := 12.0
+const MIN_PULL_STRENGTH := 0.4
 const MAX_PULL_STRENGTH := 2.8
 const HAND_HOVER_CEILING := 3.6
 const EDGE_NORMALS := [
@@ -94,10 +96,12 @@ var effects_material := StandardMaterial3D.new()
 var strike_effects := CheckerStrikeEffects.new()
 var checker_trails := CheckerTrails.new()
 var blast_effects := Node3D.new()
+var sticky_slime_mesh := PlaneMesh.new()
 var rng := RandomNumberGenerator.new()
 var orbiting := false
 var music_queue: Array[AudioStream] = []
 @onready var background_music: AudioStreamPlayer = $BackgroundMusic
+@onready var checker_strike_sound: AudioStreamPlayer = $CheckerSounds/Strike
 @onready var checker_hit_sound: AudioStreamPlayer = $CheckerSounds/Hit
 @onready var checker_explosion_sound: AudioStreamPlayer = $CheckerSounds/Explosion
 @onready var checker_lightning_sound: AudioStreamPlayer = $CheckerSounds/Lightning
@@ -126,11 +130,13 @@ func _ready() -> void:
 			mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_build_ui()
 	_build_preview()
+	var slime_material := ShaderMaterial.new()
+	slime_material.shader = STICKY_SLIME_SHADER
+	sticky_slime_mesh.material = slime_material
+	sticky_slime_mesh.size = Vector2(0.26, 0.31)
 	player_hand.name = &"PlayerHand"
 	add_child(player_hand)
 	board_pivot.add_child(checker_trails)
-	checker_trails.board_height = BOARD_TOP
-	checker_trails.board_material.set_shader_parameter("apothem", BOARD_APOTHEM)
 	board_pivot.add_child(strike_effects)
 	board_pivot.add_child(blast_effects)
 	beaver_voice.subtitle_changed.connect(_set_beaver_subtitle)
@@ -700,18 +706,20 @@ func _draw_aim(shot: Vector3) -> void:
 	if not aim_arrow.visible:
 		return
 	var direction := shot.normalized()
-	var power := shot.length() / MAX_PULL_STRENGTH
+	var strength := shot.length()
+	var power := clampf(strength / MAX_PULL_STRENGTH, 0.0, 1.0)
 	var start := _on_board(selected.global_position) + direction * (Checker.RADIUS + 0.025)
 	var length := lerpf(0.46, 1.72, power)
 	if selected.hovering:
 		start.y += selected.global_position.y - PIECE_Y
 	else:
-		length = minf(length, _edge_distance(start, direction))
-	aim_arrow.visible = length >= 0.10
+		length = minf(length, maxf(_edge_distance(start, direction), 0.34))
 	aim_arrow.global_position = start + direction * length * 0.5
 	aim_arrow.rotation.y = atan2(direction.x, direction.z)
 	aim_arrow.scale.z = length
 	aim_material.set_shader_parameter("arrow_length", length)
+	aim_material.set_shader_parameter("pull_amount",
+		clampf(inverse_lerp(MIN_PULL_STRENGTH, MAX_PULL_STRENGTH, strength), 0.0, 1.0))
 	if selected.icon == Checker.Icon.SNIPER:
 		_draw_trajectory(selected, shot)
 
@@ -847,7 +855,8 @@ func _pull_strength(drag: Vector2) -> float:
 		available = minf(available, (viewport_size.y - drag_start.y) / direction.y)
 	elif direction.y < -0.0001:
 		available = minf(available, -drag_start.y / direction.y)
-	return clampf(drag.length() / maxf(available, 1.0) * MAX_PULL_STRENGTH, 0.4, MAX_PULL_STRENGTH)
+	return clampf(drag.length() / maxf(available, 1.0) * MAX_PULL_STRENGTH,
+		MIN_PULL_STRENGTH, MAX_PULL_STRENGTH)
 
 func _aim_vector(cursor: Vector2) -> Vector3:
 	var drag := cursor - drag_start
@@ -926,6 +935,7 @@ func _shoot(piece: Checker, direction: Vector3, strength: float, offset := Vecto
 	piece.incoming_velocity = direction * strength * SHOT_IMPULSE * piece.shot_multiplier() / piece.mass
 	var lever := offset.slide(direction).limit_length(Checker.RADIUS) * 0.30
 	_push(piece, piece.incoming_velocity, lever)
+	checker_strike_sound.play()
 	var intensity := clampf(piece.incoming_velocity.length() / 6.0, 0.12, 1.0)
 	piece.stretch_on_impact(direction, intensity)
 
@@ -1033,23 +1043,72 @@ func _trigger_contact(piece: Checker, other: Checker) -> void:
 				_stick_pieces(piece, other)
 
 func _stick_pieces(a: Checker, b: Checker) -> void:
-	for link in links:
-		if a in link.bodies or b in link.bodies:
-			return
-	var joint := PinJoint2D.new()
-	add_child(joint)
-	joint.global_position = (a.planar_body.position + b.planar_body.position) * 0.5
-	joint.node_a = joint.get_path_to(a.planar_body)
-	joint.node_b = joint.get_path_to(b.planar_body)
+	if a.glued or b.glued:
+		return
+	_space_sticky_pair(a, b, true)
+	var middle := (a.planar_body.global_position + b.planar_body.global_position) * 0.5
+	var axis := a.planar_body.global_position.direction_to(b.planar_body.global_position)
+	var across := axis.orthogonal() * (DIAMETER * Checker.PIXELS_PER_UNIT * 0.31)
+	# Two anchors keep the edges together when either checker spins.
+	var joints: Array[PinJoint2D] = []
+	for anchor: Vector2 in [middle - across, middle + across]:
+		var joint := PinJoint2D.new()
+		add_child(joint)
+		joint.global_position = anchor
+		joint.node_a = joint.get_path_to(a.planar_body)
+		joint.node_b = joint.get_path_to(b.planar_body)
+		joints.append(joint)
+	a.glued = true
+	b.glued = true
 	a.planar_body.sleeping = false
 	b.planar_body.sleeping = false
-	links.append({"bodies": [a, b], "joint": joint})
+	var slime := MeshInstance3D.new()
+	slime.name = "StickySlime"
+	slime.mesh = sticky_slime_mesh
+	slime.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	slime.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
+	board_pivot.add_child(slime)
+	var link := {"bodies": [a, b], "joints": joints, "slime": slime}
+	links.append(link)
+	_update_sticky_slime(link)
+
+func _space_sticky_pair(a: Checker, b: Checker, close_gap := false) -> void:
+	var offset := b.planar_body.position - a.planar_body.position
+	var distance := offset.length()
+	var correction := DIAMETER * Checker.PIXELS_PER_UNIT - distance
+	if absf(correction) < 0.001 or (correction < 0.0 and not close_gap):
+		return
+	var axis := offset / distance if distance > 0.001 else Vector2.RIGHT
+	var share := b.mass / (a.mass + b.mass)
+	a.planar_body.position -= axis * correction * share
+	b.planar_body.position += axis * correction * (1.0 - share)
+	a.sync_planar_position()
+	b.sync_planar_position()
+
+func _update_sticky_slime(link: Dictionary) -> void:
+	var a: Checker = link.bodies[0]
+	var b: Checker = link.bodies[1]
+	var slime: MeshInstance3D = link.slime
+	var start := board_pivot.to_local(a.get_global_transform_interpolated().origin)
+	var end := board_pivot.to_local(b.get_global_transform_interpolated().origin)
+	var axis := start.direction_to(end)
+	var side := axis.cross(Vector3.UP).normalized()
+	if side.is_zero_approx():
+		axis = Vector3.RIGHT
+		side = Vector3.BACK
+	var up := side.cross(axis)
+	slime.transform = Transform3D(Basis(axis, up, side), start.lerp(end, 0.5) + up * 0.072)
 
 func _release_link(index: int) -> void:
-	var joint: PinJoint2D = links[index].joint
-	joint.node_a = NodePath()
-	joint.node_b = NodePath()
-	joint.queue_free()
+	var link := links[index]
+	for joint: PinJoint2D in link.joints:
+		joint.node_a = NodePath()
+		joint.node_b = NodePath()
+		joint.queue_free()
+	for piece: Checker in link.bodies:
+		piece.glued = false
+	link.slime.hide()
+	link.slime.queue_free()
 	links.remove_at(index)
 
 func _clear_links() -> void:
@@ -1130,6 +1189,8 @@ func _process(delta: float) -> void:
 	_update_camera(delta)
 	_update_player_hand(delta)
 	checker_trails.update_trails(delta, pieces, phase == "moving")
+	for link in links:
+		_update_sticky_slime(link)
 	strike_effects.tick(delta)
 	var armed: Array[Checker] = []
 	if phase == "moving":
@@ -1168,10 +1229,6 @@ func _contain_piece(piece: Checker, margin: float) -> void:
 	piece.planar_body.linear_velocity = Checker.to_plane(velocity)
 
 func _resolve_board_edge(piece: Checker) -> void:
-	if piece.is_intangible():
-		if _is_outside_board(piece.position, Checker.RADIUS):
-			_contain_piece(piece, Checker.RADIUS)
-		return
 	if not _is_outside_board(piece.position, 0.0):
 		piece.hovering = false
 		return
@@ -1187,6 +1244,8 @@ func _resolve_board_edge(piece: Checker) -> void:
 	_eliminate(piece)
 
 func _eliminate(piece: Checker) -> void:
+	if piece == phasing_piece:
+		_end_ghost_phase()
 	for i in range(links.size() - 1, -1, -1):
 		if piece in links[i].bodies:
 			_release_link(i)
@@ -1217,6 +1276,8 @@ func _physics_process(delta: float) -> void:
 			p.apply_slide_friction(delta, stopping_distance)
 	_resolve_contacts()
 	var pending := _tick_effects(delta)
+	for link in links:
+		_space_sticky_pair(link.bodies[0], link.bodies[1])
 	var moving := false
 	var falling := false
 	for i in range(pieces.size() - 1, -1, -1):
@@ -1297,7 +1358,7 @@ func _find_ghost_landing(piece: Checker) -> Vector3:
 	return origin
 
 func _ghost_landing_is_clear(position: Vector3) -> bool:
-	if _is_off_board(position, Checker.RADIUS):
+	if _is_off_board(position):
 		return false
 	for other in pieces:
 		if other.falling or other.is_intangible():
@@ -1324,7 +1385,10 @@ func _materialize_ghost() -> void:
 	checker_trails.forget(piece)
 	piece.reset_physics_interpolation()
 	piece.stop_motion()
-	piece.spend_ghost()
+	_end_ghost_phase()
+
+func _end_ghost_phase() -> void:
+	phasing_piece.spend_ghost()
 	phasing_piece = null
 	ghost_contacts.clear()
 

@@ -1,43 +1,59 @@
 extends MeshInstance3D
 
 const TRAIL_SHADER := preload("res://assets/FX/checker_trail.gdshader")
-const SPACING := 0.032
-const DIAMETER := Checker.RADIUS * 2.0
-const TAIL_DIAMETERS := 3.8
-const BOARD_TRAIL_DIAMETERS := 4.8
-const BOARD_MARK := preload("res://assets/FX/checker_board_mark.gdshader")
-const STOP_FADE := 0.29
+const SPACING := 0.030
+const MAX_LENGTH := Checker.RADIUS * 15.6
+const MAX_SAMPLES := ceili(MAX_LENGTH / SPACING) + 2
+const LIFETIME := 0.43
+const MIN_SPEED := 0.12
+const TAPER_LENGTH := 0.23
+const HEIGHT_OFFSET := 0.034
+const TURN_SMOOTHING_SAMPLES := 6
+const WIDTH_CHANGE_PER_UNIT := 0.72
+const CROSS_COORDS := [0.0, 0.18, 0.34, 0.43, 0.50, 0.57, 0.66, 0.82, 1.0]
+
+class Sample:
+	var point: Vector3
+	var time: float
+	var distance: float
+	var strength: float
+
+	func _init(position: Vector3, timestamp: float, distance_along: float, intensity: float) -> void:
+		point = position
+		time = timestamp
+		distance = distance_along
+		strength = intensity
 
 class Track:
-	var points: Array[Vector3] = []
-	var head: Vector3
-	var distance := 0.0
-	var last_motion := 0.0
-	var sample_index := 0
-	var icon: Checker.Icon
+	var samples: Array[Sample] = []
+	var head: Sample
+	var tint: Color
+	var seed: int
 
-var board_height := 0.0
 var histories: Dictionary[int, Track] = {}
-var trails := ImmediateMesh.new()
-var surface := ShaderMaterial.new()
-var board_material := ShaderMaterial.new()
+var ribbon_mesh := ArrayMesh.new()
+var ribbon_material := ShaderMaterial.new()
+var ribbon_indices := PackedInt32Array()
 var clock := 0.0
-var camera_right := Vector3.RIGHT
-var camera_up := Vector3.UP
 
 
 func _ready() -> void:
-	surface.shader = TRAIL_SHADER
-	board_material.shader = BOARD_MARK
-
-	mesh = trails
+	ribbon_material.shader = TRAIL_SHADER
+	ribbon_material.set_shader_parameter("trail_length", MAX_LENGTH)
+	var columns := CROSS_COORDS.size()
+	for row in MAX_SAMPLES:
+		for column in range(columns - 1):
+			var a := row * columns + column
+			var b := a + columns
+			ribbon_indices.append_array(PackedInt32Array([a, a + 1, b, b, a + 1, b + 1]))
+	mesh = ribbon_mesh
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 
 
 func clear() -> void:
 	histories.clear()
-	trails.clear_surfaces()
+	ribbon_mesh.clear_surfaces()
 
 
 func forget(piece: Checker) -> void:
@@ -48,161 +64,177 @@ func update_trails(delta: float, pieces: Array[Checker], emit: bool) -> void:
 	clock += delta
 	if emit:
 		for piece in pieces:
-			var id := piece.get_instance_id()
-			if histories.has(id) or piece.falling or piece.is_in_motion():
-				_record(id, piece)
-	trails.clear_surfaces()
+			if not piece.visible:
+				continue
+			var speed := piece.fall_velocity.length() if piece.falling else piece.linear_velocity.length()
+			if speed >= MIN_SPEED or histories.has(piece.get_instance_id()):
+				_record(piece, speed)
+
+	if ribbon_mesh.get_surface_count() > 0:
+		ribbon_mesh.clear_surfaces()
+	if histories.is_empty():
+		return
 	var camera := get_viewport().get_camera_3d()
-	if camera:
-		var axes := global_basis.inverse() * camera.global_basis
-		camera_right = axes.x.normalized()
-		camera_up = axes.y.normalized()
-	var drawing := false
+	var camera_right := global_basis.inverse() * camera.global_basis.x if camera else Vector3.RIGHT
 	for id: int in histories.keys():
 		var track := histories[id]
-		var idle := clock - track.last_motion
-		if idle >= STOP_FADE:
+		if clock - track.head.time >= LIFETIME:
 			histories.erase(id)
 			continue
-		if track.points.size() < 2:
+		# Keep one expired point so the visible end can fade into it.
+		while track.samples.size() > 1 and clock - track.samples[1].time >= LIFETIME:
+			track.samples.pop_front()
+		if not camera or track.head.distance - track.samples[0].distance < 0.002:
 			continue
-		if not drawing:
-			trails.surface_begin(Mesh.PRIMITIVE_TRIANGLES, surface)
-			drawing = true
-		_draw(track, id, 1.0 - smoothstep(0.02, STOP_FADE, idle))
-	if drawing:
-		trails.surface_end()
-		_draw_board_marks()
+		_draw_ribbon(track, camera_right)
 
 
-func _draw_board_marks() -> void:
-	var drawing := false
-	for id: int in histories:
-		var track := histories[id]
-		var retreat := smoothstep(0.015, STOP_FADE, clock - track.last_motion)
-		var head_distance := track.sample_index * SPACING + track.distance
-		var previous := track.head
-		var previous_lag := 0.0
-		var previous_side := Vector3.ZERO
-		for i in track.points.size():
-			var point := track.points[-1 - i]
-			var lag := (i * SPACING + track.distance) / DIAMETER
-			if lag > BOARD_TRAIL_DIAMETERS:
-				point = previous.lerp(point, (BOARD_TRAIL_DIAMETERS - previous_lag) / (lag - previous_lag))
-				lag = BOARD_TRAIL_DIAMETERS
-			var across := Vector3.UP.cross(point - previous)
-			if absf(point.y - board_height - Checker.HALF_HEIGHT) < 0.025 and absf(previous.y - board_height - Checker.HALF_HEIGHT) < 0.025 and across.length_squared() > 0.000001:
-				if not drawing:
-					trails.surface_begin(Mesh.PRIMITIVE_TRIANGLES, board_material)
-					drawing = true
-				var side := across.normalized() * 0.15
-				if previous_side.is_zero_approx():
-					previous_side = side
-				var a := Vector3(previous.x, board_height + 0.005, previous.z)
-				var b := Vector3(point.x, board_height + 0.005, point.z)
-				var near_alpha := 1.0 - smoothstep(0.0, 1.0, previous_lag / BOARD_TRAIL_DIAMETERS + retreat)
-				var far_alpha := 1.0 - smoothstep(0.0, 1.0, lag / BOARD_TRAIL_DIAMETERS + retreat)
-				trails.surface_set_uv2(Vector2(track.icon, id % 113))
-				for vertex in [0, 1, 2, 2, 1, 3]:
-					var far_end: bool = vertex >= 2
-					var sign_x: float = -1.0 if vertex % 2 == 0 else 1.0
-					trails.surface_set_color(Color(1, 1, 1, far_alpha if far_end else near_alpha))
-					var along := head_distance - (lag if far_end else previous_lag) * DIAMETER
-					trails.surface_set_uv(Vector2(sign_x, along))
-					trails.surface_add_vertex(b + side * sign_x if far_end else a + previous_side * sign_x)
-				previous_side = side
-			else:
-				previous_side = Vector3.ZERO
-			previous = point
-			previous_lag = lag
-			if lag >= BOARD_TRAIL_DIAMETERS:
-				break
-	if drawing:
-		trails.surface_end()
-
-
-func _record(id: int, piece: Checker) -> void:
-	var point := to_local(piece.get_global_transform_interpolated().origin)
-	if not histories.has(id):
-		var fresh := Track.new()
-		fresh.head = point
-		fresh.points.append(point)
-		fresh.last_motion = clock
-		fresh.icon = piece.icon
-		histories[id] = fresh
+func _record(piece: Checker, speed: float) -> void:
+	var id := piece.get_instance_id()
+	var point := to_local(piece.get_global_transform_interpolated().origin) + Vector3.UP * HEIGHT_OFFSET
+	var strength := lerpf(0.06, 0.99, smoothstep(0.24, 3.6, speed))
+	var track := histories.get(id) as Track
+	if track == null or clock - track.head.time >= LIFETIME:
+		if speed < MIN_SPEED:
+			return
+		track = Track.new()
+		track.head = Sample.new(point, clock, 0.0, strength)
+		track.samples.append(track.head)
+		track.tint = _trail_color(piece)
+		track.seed = posmod(hash(id), 1009)
+		histories[id] = track
 		return
-	var track := histories[id]
-	var segment := track.head.distance_to(point)
+
+	var previous := track.head
+	var segment := previous.point.distance_to(point)
 	if segment < 0.0001:
 		return
-	var along := SPACING - track.distance
-	while along <= segment:
-		track.points.append(track.head.lerp(point, along / segment))
-		track.sample_index += 1
-		if track.points.size() > ceili(BOARD_TRAIL_DIAMETERS * DIAMETER / SPACING) + 1:
-			track.points.pop_front()
-		along += SPACING
-	track.distance = fposmod(track.distance + segment, SPACING)
-	track.head = point
-	track.last_motion = clock
+	var distance := previous.distance + segment
+	var sample_distance := track.samples[-1].distance + SPACING
+	while sample_distance <= distance:
+		var weight := (sample_distance - previous.distance) / segment
+		track.samples.append(Sample.new(previous.point.lerp(point, weight),
+			lerpf(previous.time, clock, weight), sample_distance,
+			lerpf(previous.strength, strength, weight)))
+		if track.samples.size() > MAX_SAMPLES:
+			track.samples.pop_front()
+		sample_distance += SPACING
+	track.head = Sample.new(point, clock, distance, strength)
 
 
-func _draw(track: Track, id: int, opacity: float) -> void:
-	var previous := track.head
-	for i in track.points.size():
-		var lag := (i * SPACING + track.distance) / DIAMETER
-		var fade := (1.0 - smoothstep(0.5, TAIL_DIAMETERS, lag)) * opacity
-		if fade < 0.006:
-			break
-		var p := track.points[-1 - i]
-		var seed_value := float(posmod(hash(Vector2i(id, track.sample_index - i)), 100003))
-		var jitter := Vector3(sin(seed_value), cos(seed_value * 1.7), sin(seed_value * 0.73))
-		match track.icon:
-			Checker.Icon.SNOWFLAKE:
-				var center := p + jitter * Vector3(0.067, 0.042, 0.067)
-				var axis := (Vector3.UP + jitter * 0.85).normalized()
-				var length := (0.026 + 0.012 * jitter.z) * sqrt(fade)
-				_crystal(center - axis * length, center + axis * length, length * 0.54,
-					Color(0.48, 0.90, 1.18, fade))
-			Checker.Icon.LIGHTNING:
-				var bend := Vector3(sin(clock * 31.0 + seed_value), jitter.y, cos(clock * 28.0 + seed_value))
-				var bolt := p + bend * (0.043 * smoothstep(0.0, 0.4, lag))
-				_crystal(previous, bolt, 0.023 * fade, Color(0.19, 0.75, 1.8, fade))
-				_crystal(previous, bolt, 0.009 * fade, Color(1.5, 1.9, 2.0, fade))
-				if i % 2 == track.sample_index % 2:
-					var spark := bolt + jitter * 0.092
-					_crystal(spark, spark + jitter * 0.041, 0.007, Color(0.65, 1.4, 2.0, fade))
-				previous = bolt
-			Checker.Icon.EXPLOSIVE:
-				var heat := smoothstep(0.33, 1.02, lag)
-				var tint := Color(0.32, 0.30, 0.31).lerp(Color(1.9, 0.38, 0.035), heat)
-				tint = tint.lerp(Color(2.2, 1.25, 0.17), heat * (0.35 + 0.25 * jitter.y))
-				tint.a = fade * 0.87
-				_puff(p + jitter * 0.033 + Vector3.UP * lag * 0.034,
-					(0.077 + jitter.x * 0.018) * sqrt(fade), tint)
-			_:
-				_crystal(previous, p, 0.046 * fade, Color(0.95, 0.98, 1.0, 0.28 * fade))
-				previous = p
+func _draw_ribbon(track: Track, camera_right: Vector3) -> void:
+	var points: Array[Sample] = track.samples.duplicate()
+	if track.head.distance - points[-1].distance >= 0.001:
+		points.append(track.head)
+	else:
+		points[-1] = track.head
+	var last := points.size() - 1
+	var taper := minf(TAPER_LENGTH, track.head.distance)
+	var offset := track.seed * 0.081
+	var centers := _smooth_centers(points)
+	var widths := _ribbon_widths(points, centers, taper)
+	var previous_side := Vector3.ZERO
+	var columns := CROSS_COORDS.size()
+	var white_profile := 1.0 if track.tint == Color.WHITE else 0.0
+	var size := points.size() * columns
+	var vertices := PackedVector3Array()
+	var colors := PackedColorArray()
+	var uv := PackedVector2Array()
+	var uv2 := PackedVector2Array()
+	vertices.resize(size)
+	colors.resize(size)
+	uv.resize(size)
+	uv2.resize(size)
+	for i in points.size():
+		var sample: Sample = points[i]
+		var center := centers[i]
+		var incoming := centers[maxi(i - 1, 0)].direction_to(center)
+		var outgoing := center.direction_to(centers[mini(i + 1, last)])
+		var tangent := (incoming + outgoing).normalized()
+		if incoming.dot(outgoing) < -0.995:
+			tangent = outgoing
+		# Keep the ribbon across the board plane so the glow cannot intersect it.
+		var side := Vector3.UP.cross(tangent).normalized()
+		if side.is_zero_approx():
+			side = previous_side if not previous_side.is_zero_approx() else camera_right.slide(Vector3.UP).normalized()
+		if side.dot(previous_side) < 0.0:
+			side = -side
+		previous_side = side
+
+		var lag := track.head.distance - sample.distance
+		var profile := _profile(sample, lag, taper)
+		var width := widths[i]
+		var opacity := sample.strength * profile * (2.0 - profile)
+		var tint := Color(track.tint, opacity)
+		# Keep the luminous center on shared vertices so it stays aligned through bends.
+		for column in columns:
+			var across: float = CROSS_COORDS[column]
+			var vertex := i * columns + column
+			vertices[vertex] = center + side * width * (across * 2.0 - 1.0)
+			colors[vertex] = tint
+			uv[vertex] = Vector2(across, sample.distance + offset)
+			uv2[vertex] = Vector2(white_profile, lag)
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_TEX_UV] = uv
+	arrays[Mesh.ARRAY_TEX_UV2] = uv2
+	arrays[Mesh.ARRAY_INDEX] = ribbon_indices.slice(0, last * (columns - 1) * 6)
+	ribbon_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	ribbon_mesh.surface_set_material(ribbon_mesh.get_surface_count() - 1, ribbon_material)
 
 
-func _crystal(a: Vector3, b: Vector3, radius: float, tint: Color) -> void:
-	var axis := a.direction_to(b)
-	if axis.is_zero_approx():
-		return
-	var side := axis.cross(Vector3.RIGHT if absf(axis.y) > 0.9 else Vector3.UP).normalized()
-	var up := axis.cross(side)
-	var mid := a.lerp(b, 0.44)
-	var rim := [mid + side * radius, mid + up * radius, mid - side * radius, mid - up * radius]
-	for k in 4:
-		var shade := [1.0, 0.81, 0.57, 0.92][k] as float
-		trails.surface_set_color(Color(tint.r * shade, tint.g * shade, tint.b * shade, tint.a))
-		trails.surface_set_uv(Vector2(-1, -1))
-		for vertex: Vector3 in [a, rim[k], rim[(k+1)%4], b, rim[(k+1)%4], rim[k]]:
-			trails.surface_add_vertex(vertex)
+func _smooth_centers(points: Array[Sample]) -> PackedVector3Array:
+	var centers := PackedVector3Array()
+	centers.resize(points.size())
+	for i in points.size():
+		var radius := mini(TURN_SMOOTHING_SAMPLES, mini(i, points.size() - 1 - i))
+		var weight := radius + 1
+		var center := points[i].point * weight
+		for step in range(1, weight):
+			center += (points[i - step].point + points[i + step].point) * (weight - step)
+		centers[i] = center / (weight * weight)
+	return centers
 
 
-func _puff(p: Vector3, radius: float, tint: Color) -> void:
-	trails.surface_set_color(tint)
-	for uv: Vector2 in [Vector2.ZERO, Vector2.RIGHT, Vector2.ONE, Vector2.ZERO, Vector2.ONE, Vector2.DOWN]:
-		trails.surface_set_uv(uv)
-		trails.surface_add_vertex(p + (camera_right * (uv.x * 2.0 - 1.0) + camera_up * (uv.y * 2.0 - 1.0)) * radius)
+func _ribbon_widths(points: Array[Sample], centers: PackedVector3Array, taper: float) -> PackedFloat32Array:
+	var widths := PackedFloat32Array()
+	widths.resize(points.size())
+	var head_distance := points[-1].distance
+	for i in points.size():
+		var profile := _profile(points[i], head_distance - points[i].distance, taper)
+		var width := Checker.RADIUS * 1.88 * sqrt(profile)
+		if i > 0 and i < points.size() - 1:
+			var incoming := centers[i] - centers[i - 1]
+			var outgoing := centers[i + 1] - centers[i]
+			var turn := (incoming.normalized() - outgoing.normalized()).length()
+			if turn > 0.02:
+				var step := (incoming.length() + outgoing.length()) * 0.5
+				width = minf(width, maxf(0.012, step * 0.80 / turn))
+		widths[i] = width
+	# Taper across several rows around the curve so the inner edge cannot fold over.
+	for i in range(1, widths.size()):
+		var step := points[i].distance - points[i - 1].distance
+		widths[i] = minf(widths[i], widths[i - 1] + step * WIDTH_CHANGE_PER_UNIT)
+	for i in range(widths.size() - 2, -1, -1):
+		var step := points[i + 1].distance - points[i].distance
+		widths[i] = minf(widths[i], widths[i + 1] + step * WIDTH_CHANGE_PER_UNIT)
+	return widths
+
+
+func _profile(sample: Sample, lag: float, taper: float) -> float:
+	var age := 1.0 - smoothstep(0.045, LIFETIME, clock - sample.time)
+	var length_fade := 1.0 - smoothstep(0.48, MAX_LENGTH, lag)
+	var tip := smoothstep(0.0, taper, sample.distance)
+	return age * length_fade * tip
+
+
+func _trail_color(piece: Checker) -> Color:
+	match piece.icon:
+		Checker.Icon.SNOWFLAKE: return Color(0.035, 0.40, 1.0)
+		Checker.Icon.LIGHTNING: return Color(0.035, 0.19, 1.0)
+		Checker.Icon.EXPLOSIVE: return Color(1.0, 0.86, 0.016)
+		Checker.Icon.FLOATING: return Color(0.03, 0.80, 0.64)
+		Checker.Icon.RUBBER: return Color(1.0, 0.075, 0.40)
+	return Color.WHITE
