@@ -77,6 +77,11 @@ var intro_ui: Control
 var intro_transition: Tween
 var beaver_subtitle: Label
 var volume_control: PanelContainer
+var score_hud := VBoxContainer.new()
+var score_label: Label
+var score_popups := Control.new()
+var pending_popups: Array[Label] = []
+var turn_start_score := 0
 var run_overlay: ColorRect
 var run_heading: Label
 var run_message: Label
@@ -189,6 +194,145 @@ func _build_ui() -> void:
 	_build_intro_ui(root)
 	_build_run_overlay(root)
 	_build_volume_control(root)
+	_build_score_hud(root)
+
+func _build_score_hud(root: Control) -> void:
+	root.add_child(score_hud)
+	score_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	score_hud.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
+	score_hud.offset_left = 16
+	score_hud.offset_top = -16
+	score_hud.offset_bottom = -16
+	score_hud.alignment = BoxContainer.ALIGNMENT_END
+	score_hud.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	score_label = _label(score_hud, "", 18, Color("fff1d5"))
+	score_label.add_theme_stylebox_override("normal", _panel_style(Color("30231bee")))
+	root.add_child(score_popups)
+	score_popups.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	score_popups.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	score_hud.hide()
+
+
+func _refresh_score() -> void:
+	score_label.text = "Очки  %d     Серия ходов  %d  ·  ×%d" % [
+		run.score, run.streak, maxi(1, run.streak)]
+
+
+func _award(piece: Checker, knockout := false) -> void:
+	if turn != 0 or phase != "moving" or piece.side != 1:
+		return
+	var points := run.award(piece.slot, knockout)
+	if points == 0:
+		return
+	_refresh_score()
+	var action := "Вылет" if knockout else "Попадание"
+	var multiplier := str(run.action_multiplier()).trim_suffix(".0").replace(".", ",")
+	var font_size := 26 + roundi(12.0 * (run.action_multiplier() - 1.0))
+	font_size = maxi(14, roundi(font_size * minf(1.0, score_popups.size.x / 650.0)))
+	var popup := _score_popup("%s!  ×%s" % [action, multiplier], font_size,
+		Color("ffac78") if knockout else Color("ffe6a6"))
+	var widest := popup.get_theme_font("font").get_string_size(
+		"Попадание!  ×3,9", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+	popup.custom_minimum_size.x = ceilf(widest.x) + popup.get_theme_stylebox("normal").get_minimum_size().x
+	_queue_score_popup(popup, _animate_score_event.bind(popup))
+
+
+func _animate_score_event(popup: Label) -> void:
+	var tween := popup.create_tween().set_ignore_time_scale(true)
+	tween.tween_interval(0.62)
+	tween.tween_property(popup, "modulate:a", 0.0, 0.20)
+	tween.tween_callback(_dismiss_score_popup.bind(popup))
+
+
+func _score_popup(caption: String, font_size: int, ink: Color) -> Label:
+	var popup := _label(score_popups, caption, font_size, ink)
+	popup.hide()
+	popup.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	popup.add_theme_stylebox_override("normal", _panel_style(Color("302019f5")))
+	popup.rotation_degrees = randf_range(-10.0, 10.0)
+	return popup
+
+
+func _queue_score_popup(popup: Label, animate: Callable, centered := false) -> void:
+	popup.reset_size()
+	popup.pivot_offset = popup.size * 0.5
+	popup.set_meta("centered", centered)
+	popup.visibility_changed.connect(animate, CONNECT_ONE_SHOT)
+	pending_popups.append(popup)
+	_place_pending_popups()
+
+
+func _dismiss_score_popup(popup: Label) -> void:
+	popup.hide()
+	popup.queue_free()
+	_place_pending_popups()
+
+
+func _place_pending_popups() -> void:
+	while not pending_popups.is_empty():
+		var popup := pending_popups[0]
+		var center := _free_popup_center(popup)
+		if center == Vector2.INF:
+			break
+		pending_popups.pop_front()
+		popup.position = center - popup.pivot_offset
+		popup.scale = Vector2.ONE * 0.78
+		popup.show()
+		var punch := popup.create_tween().set_ignore_time_scale(true)
+		punch.tween_property(popup, "scale", Vector2.ONE, 0.13).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+func _popup_extent(popup: Label) -> Vector2:
+	var half := popup.size * 0.52 # Includes the entrance tween's overshoot.
+	var c := absf(cos(popup.rotation))
+	var s := absf(sin(popup.rotation))
+	return Vector2(c * half.x + s * half.y, s * half.x + c * half.y) + Vector2(4, 4)
+
+
+func _free_popup_center(popup: Label) -> Vector2:
+	var area := score_popups.size
+	var extent := _popup_extent(popup)
+	var left := clampf(extent.x, area.x * 0.25, area.x * 0.5)
+	var top := minf(extent.y, area.y / 6.0)
+	var centered: bool = popup.get_meta("centered")
+	var occupied: Array[Rect2] = []
+	for older: Label in score_popups.get_children():
+		if older.visible:
+			var radius := _popup_extent(older)
+			occupied.append(Rect2(older.position + older.pivot_offset - radius, radius * 2.0))
+	for attempt in (1 if centered else 32):
+		var center := area * 0.5
+		if not centered:
+			center = Vector2(randf_range(left, area.x - left), randf_range(top, area.y / 3.0 - top))
+		var bounds := Rect2(center - extent, extent * 2.0)
+		var free := true
+		for other in occupied:
+			if bounds.intersects(other):
+				free = false
+				break
+		if free:
+			return center
+	return Vector2.INF
+
+
+func _show_turn_style(points: int, multiplier: int) -> void:
+	var format_text := "Стиль!\n%d очков   ·   Серия ×%d"
+	# Reserve the final width so the counter stays centered while the digits change.
+	var popup := _score_popup(format_text % [points, multiplier], 32, Color("ffe6a6"))
+	popup.custom_minimum_size = popup.get_combined_minimum_size()
+	_queue_score_popup(popup, _animate_turn_style.bind(popup, format_text, points, multiplier), true)
+
+
+func _animate_turn_style(popup: Label, format_text: String, points: int, multiplier: int) -> void:
+	var count := func(value: float) -> void:
+		popup.text = format_text % [roundi(value), multiplier]
+	count.call(0.0)
+	var tween := popup.create_tween().set_ignore_time_scale(true)
+	tween.tween_method(count, 0.0, float(points), 0.55).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_interval(0.65)
+	tween.tween_property(popup, "modulate:a", 0.0, 0.18)
+	tween.tween_callback(_dismiss_score_popup.bind(popup))
+
 
 func _build_intro_ui(root: Control) -> void:
 	intro_ui = Control.new()
@@ -365,6 +509,12 @@ func _show_run_result(title: String, message: String) -> void:
 
 func _start_run() -> void:
 	run.start(player_setup, rng)
+	pending_popups.clear()
+	for popup in score_popups.get_children():
+		popup.hide()
+		popup.queue_free()
+	score_hud.show()
+	_refresh_score()
 	_new_round()
 
 func _set_beaver_subtitle(text: String) -> void:
@@ -780,6 +930,9 @@ func _shoot(piece: Checker, direction: Vector3, strength: float, offset := Vecto
 	piece.stretch_on_impact(direction, intensity)
 
 func _begin_shot_resolution() -> void:
+	if turn == 0:
+		turn_start_score = run.score
+		run.begin_player_turn()
 	action_camera.new_shot()
 	phase = "moving"
 	shot_knockouts.fill(false)
@@ -830,6 +983,7 @@ func _resolve_ghost_contacts() -> void:
 		var nearest := Geometry2D.get_closest_point_to_segment(center, ghost_previous_position, point)
 		if center.distance_squared_to(nearest) <= radius * radius:
 			ghost_contacts.append(other)
+			_award(other)
 			checker_ghost_touch_sound.play()
 			_trigger_contact(other, phasing_piece)
 	ghost_previous_position = point
@@ -843,6 +997,11 @@ func _touch(a: Checker, b: Checker, normal: Vector3) -> void:
 	var a_speed := a.incoming_velocity.dot(normal)
 	var b_speed := -b.incoming_velocity.dot(normal)
 	var closing_speed := a_speed + b_speed
+	if closing_speed > 0.0:
+		if a.side != b.side:
+			_award(a if a.side == 1 else b)
+		elif a.side == 1:
+			_award(b if a_speed >= b_speed else a)
 	if closing_speed > 0.32:
 		checker_hit_sound.play()
 		var a_struck := a_speed >= b_speed
@@ -1039,6 +1198,7 @@ func _eliminate(piece: Checker) -> void:
 			if piece.position.dot(normal) > piece.position.dot(nearest_edge):
 				nearest_edge = normal
 		outward = board_pivot.global_basis * nearest_edge
+	_award(piece, true)
 	piece.leave_board(outward)
 	action_camera.fall(piece, board_pivot.global_position)
 	if not shot_knockouts[piece.side]:
@@ -1170,7 +1330,10 @@ func _materialize_ghost() -> void:
 
 func _finish_shot() -> void:
 	action_camera.restore()
-	run.finish_turn()
+	run.finish_turn(turn == 0)
+	if turn == 0:
+		_show_turn_style(run.score - turn_start_score, maxi(1, run.streak))
+	_refresh_score()
 	contacts.clear()
 	var counts := [0, 0]
 	for p in pieces:

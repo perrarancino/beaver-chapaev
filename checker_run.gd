@@ -7,6 +7,13 @@ const REWARDS: Array[Checker.Icon] = [
 	Checker.Icon.RUBBER,
 ]
 
+const ACTION_MULTIPLIERS := [1.0, 1.2, 1.5, 2.0, 2.7, 3.9]
+
+var score := 0
+var streak := 0
+var actions := 0
+var hit_slots: Dictionary[int, bool] = {}
+
 var stage := 1
 var wins := 0
 var completed_turns := 0
@@ -15,6 +22,9 @@ var rng: RandomNumberGenerator
 
 
 func start(initial: Array[Checker.Icon], random: RandomNumberGenerator) -> void:
+	score = 0
+	streak = 0
+	begin_player_turn()
 	rng = random
 	stage = 1
 	wins = 0
@@ -66,7 +76,32 @@ func _reward_slot(icon: Checker.Icon) -> int:
 	return -1
 
 
-func finish_turn() -> void:
+func begin_player_turn() -> void:
+	actions = 0
+	hit_slots.clear()
+
+
+func action_multiplier() -> float:
+	return ACTION_MULTIPLIERS[clampi(actions - 1, 0, ACTION_MULTIPLIERS.size() - 1)]
+
+
+func award(slot: int, knockout: bool) -> int:
+	if not knockout:
+		if hit_slots.has(slot):
+			return 0
+		hit_slots[slot] = true
+	if actions == 0:
+		streak += 1
+	actions += 1
+	var base := 500 if knockout else 100
+	var points := roundi(base * action_multiplier() * streak)
+	score += points
+	return points
+
+
+func finish_turn(player_turn: bool) -> void:
+	if player_turn and actions == 0:
+		streak = 0
 	completed_turns += 1
 
 

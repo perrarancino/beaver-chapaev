@@ -6,8 +6,9 @@ const HALF_HEIGHT := 0.068
 const PIXELS_PER_UNIT := 100.0
 const SLIDE_GRAVITY := 9.8
 const TABLE_FRICTION := 5.4
-const KNOCKOUT_PAUSE := 0.12
-const KNOCKOUT_FADE := 0.38
+const KNOCKOUT_BLINK_DURATION := 1.0
+const KNOCKOUT_FADE := 0.28
+const KNOCKOUT_CLOUD := preload("res://assets/FX/checker_knockout_cloud.gdshader")
 const NORMAL_FRICTION := 0.24
 const ICE_FRICTION := 0.070
 const NORMAL_DAMP := 0.10
@@ -134,9 +135,9 @@ var hover_started_turn := -1
 var fall_velocity := Vector3.ZERO
 var _fall_spin := 0.0
 var _sliding_on_table := false
-var _knockout_rest := -1.0
-var _fade_materials: Array[BaseMaterial3D] = []
-var _fade_shader_parts: Array[MeshInstance3D] = []
+var _cloud_material: ShaderMaterial
+var _fall_settled := false
+var _knockout_time := 0.0
 var stretch_tween: Tween
 var stretch_amount := 0.0
 @onready var planar_body: RigidBody2D = $PlanarBody
@@ -434,6 +435,7 @@ func shot_multiplier() -> float:
 
 func leave_board(outward: Vector3) -> void:
 	falling = true
+	visual.hide()
 	show_turn_aura(false)
 	if wind_effect:
 		wind_effect.hide()
@@ -448,8 +450,12 @@ func leave_board(outward: Vector3) -> void:
 
 
 func animate_fall(delta: float, table_y: float, table_radius: float, floor_y: float, room: Rect2) -> bool:
-	if _knockout_rest >= 0.0:
-		return _fade_knockout(delta)
+	if not _fall_settled:
+		_advance_fall(delta, table_y, table_radius, floor_y, room)
+	return _update_knockout(delta / maxf(Engine.time_scale, 0.001))
+
+
+func _advance_fall(delta: float, table_y: float, table_radius: float, floor_y: float, room: Rect2) -> void:
 
 	var start := global_position
 	var tabletop := table_y + HALF_HEIGHT
@@ -464,7 +470,7 @@ func animate_fall(delta: float, table_y: float, table_radius: float, floor_y: fl
 			fall_velocity = fall_velocity.move_toward(Vector3.ZERO, TABLE_FRICTION * delta)
 			_fall_spin = move_toward(_fall_spin, 0.0, 20.0 * delta)
 			if fall_velocity.is_zero_approx() and is_zero_approx(_fall_spin):
-				_knockout_rest = 0.0
+				_fall_settled = true
 	elif start.y >= tabletop and point.y < tabletop:
 		var contact := start.lerp(point, inverse_lerp(start.y, point.y, tabletop))
 		if Vector2(contact.x, contact.z).length_squared() <= radius_squared:
@@ -482,44 +488,37 @@ func animate_fall(delta: float, table_y: float, table_radius: float, floor_y: fl
 		fall_velocity.z *= -0.25
 	if point.y <= floor:
 		point.y = floor
-		_knockout_rest = 0.0
+		_fall_settled = true
 	global_position = point
 	rotation.y += _fall_spin * delta
-	return false
 
 
-func _fade_knockout(delta: float) -> bool:
-	if _knockout_rest >= KNOCKOUT_PAUSE + KNOCKOUT_FADE:
-		return true
-	var previous := _knockout_rest
-	_knockout_rest += delta
-	if _knockout_rest < KNOCKOUT_PAUSE:
+func _update_knockout(delta: float) -> bool:
+	_knockout_time += delta
+	if _knockout_time < KNOCKOUT_BLINK_DURATION:
+		var t := _knockout_time / KNOCKOUT_BLINK_DURATION
+		# The blink rate rises continuously from two to eight cycles per second.
+		var cycles := 2.0 * t + 3.0 * t * t
+		visual.visible = fmod(cycles, 1.0) >= 0.5
 		return false
-	if previous < KNOCKOUT_PAUSE:
-		for part: MeshInstance3D in visual.find_children("*", "MeshInstance3D", true, false):
-			if not part.is_visible_in_tree():
-				continue
-			if part.material_override is BaseMaterial3D:
-				var material := _make_fade_material(part.material_override)
-				part.material_override = material
-			elif part.material_override is ShaderMaterial:
-				_fade_shader_parts.append(part)
-			else:
-				for i in part.mesh.get_surface_count():
-					var base := part.get_active_material(i)
-					if base is BaseMaterial3D:
-						part.set_surface_override_material(i, _make_fade_material(base))
 
-	var opacity := 1.0 - smoothstep(KNOCKOUT_PAUSE, KNOCKOUT_PAUSE + KNOCKOUT_FADE, _knockout_rest)
-	for material in _fade_materials:
-		material.albedo_color.a = opacity
-	for part in _fade_shader_parts:
-		part.set_instance_shader_parameter("knockout_opacity", opacity)
-	return _knockout_rest >= KNOCKOUT_PAUSE + KNOCKOUT_FADE
+	if not _cloud_material:
+		visual.hide()
+		_fall_settled = true
+		_spawn_knockout_cloud()
+	var progress := clampf((_knockout_time - KNOCKOUT_BLINK_DURATION) / KNOCKOUT_FADE, 0.0, 1.0)
+	_cloud_material.set_shader_parameter("progress", progress)
+	return progress >= 1.0
 
 
-func _make_fade_material(base: BaseMaterial3D) -> BaseMaterial3D:
-	var material := base.duplicate() as BaseMaterial3D
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_HASH
-	_fade_materials.append(material)
-	return material
+func _spawn_knockout_cloud() -> void:
+	var cloud := MeshInstance3D.new()
+	var quad := QuadMesh.new()
+	quad.size = Vector2(1.12, 1.12)
+	_cloud_material = ShaderMaterial.new()
+	_cloud_material.shader = KNOCKOUT_CLOUD
+	cloud.mesh = quad
+	cloud.material_override = _cloud_material
+	cloud.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	cloud.position.y = 0.14
+	add_child(cloud)
