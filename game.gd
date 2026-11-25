@@ -2,6 +2,7 @@ extends Node3D
 
 const Beaver := preload("res://beaver.gd")
 const Run := preload("res://checker_run.gd")
+const Rails := preload("res://edge_rails.gd")
 const PlayerHand := preload("res://player_hand.gd")
 const LIGHT_PIECE := preload("res://piece_light.tscn")
 const DARK_PIECE := preload("res://piece_dark.tscn")
@@ -15,10 +16,9 @@ const MUSIC_TRACKS: Array[AudioStream] = [
 	preload("res://assets/music/nochnoi_tropar.mp3"),
 	preload("res://assets/music/tainaya_zasada.mp3"),
 ]
-const BOARD_APOTHEM := 2.143
-const BOARD_TOP := 0.003
-const TABLE_TOP := -0.132
-const TABLE_RADIUS := 2.86
+const TABLE_TOP := 0.003
+const BOARD_TOP := TABLE_TOP
+const TABLE_RADIUS := Rails.TABLE_RADIUS
 const FLOOR_Y := -2.1
 const ROOM_FLOOR := Rect2(-7.50, -9.30, 14.98, 16.72)
 const PIECE_Y := 0.07
@@ -37,11 +37,9 @@ const DRAG_DEAD_ZONE := 12.0
 const MIN_PULL_STRENGTH := 0.4
 const MAX_PULL_STRENGTH := 2.8
 const HAND_HOVER_CEILING := 3.6
-const EDGE_NORMALS := [
-	Vector3(1, 0, 0), Vector3(0.5, 0, 0.8660254), Vector3(-0.5, 0, 0.8660254),
-	Vector3(-1, 0, 0), Vector3(-0.5, 0, -0.8660254), Vector3(0.5, 0, -0.8660254),
-]
 const DIAMETER := Checker.RADIUS * 2.0
+const TELEPORT_EXIT_CLEARANCE := DIAMETER + 0.008
+const TELEPORT_EXIT_RUNOUT := 0.40
 var pieces: Array[Checker] = []
 var formations: Array[PackedVector3Array] = [PackedVector3Array(), PackedVector3Array()]
 var player_setup: Array[Checker.Icon] = []
@@ -81,6 +79,8 @@ var beaver_subtitle: Label
 var volume_control: PanelContainer
 var score_hud := VBoxContainer.new()
 var score_label: Label
+var rail_label: Label
+var rail_ticks: Array[ColorRect] = []
 var score_popups := Control.new()
 var pending_popups: Array[Label] = []
 var turn_start_score := 0
@@ -107,6 +107,7 @@ var music_queue: Array[AudioStream] = []
 @onready var checker_lightning_sound: AudioStreamPlayer = $CheckerSounds/Lightning
 @onready var checker_ghost_touch_sound: AudioStreamPlayer = $CheckerSounds/GhostTouch
 @onready var board_pivot: Node3D = $BoardPivot
+@onready var rails: Rails = $BoardPivot/Rails
 @onready var beaver: Beaver = $Beaver
 @onready var beaver_voice = $Beaver/Voice
 @onready var aim_arrow: MeshInstance3D = $AimArrow
@@ -211,6 +212,23 @@ func _build_score_hud(root: Control) -> void:
 	score_hud.offset_bottom = -16
 	score_hud.alignment = BoxContainer.ALIGNMENT_END
 	score_hud.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	score_hud.add_theme_constant_override("separation", 8)
+	var rail_meter := HBoxContainer.new()
+	rail_meter.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rail_meter.add_theme_constant_override("separation", 9)
+	score_hud.add_child(rail_meter)
+	var ticks := HBoxContainer.new()
+	ticks.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ticks.add_theme_constant_override("separation", 4)
+	ticks.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	rail_meter.add_child(ticks)
+	for _slot in Rails.MAX_RAILS:
+		var tick := ColorRect.new()
+		tick.custom_minimum_size = Vector2(18, 3)
+		tick.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ticks.add_child(tick)
+		rail_ticks.append(tick)
+	rail_label = _label(rail_meter, "", 15, Color("f6e2be"))
 	score_label = _label(score_hud, "", 18, Color("fff1d5"))
 	score_label.add_theme_stylebox_override("normal", _panel_style(Color("30231bee")))
 	root.add_child(score_popups)
@@ -224,6 +242,17 @@ func _refresh_score() -> void:
 		run.score, run.streak, maxi(1, run.streak)]
 
 
+func _refresh_rail_meter() -> void:
+	rail_label.text = "Бортики  ×%s" % _multiplier_text(run.rail_multiplier)
+	for i in rail_ticks.size():
+		rail_ticks[i].color = Rails.COLORS[rails.kind_at(run.hit_rails[i])] if i < run.hit_rails.size() \
+			else Color("ebd3ac60")
+
+
+func _multiplier_text(multiplier: float) -> String:
+	return ("%.2f" % multiplier).rstrip("0").trim_suffix(".").replace(".", ",")
+
+
 func _award(piece: Checker, knockout := false) -> void:
 	if turn != 0 or phase != "moving" or piece.side != 1:
 		return
@@ -232,7 +261,7 @@ func _award(piece: Checker, knockout := false) -> void:
 		return
 	_refresh_score()
 	var action := "Вылет" if knockout else "Попадание"
-	var multiplier := str(run.action_multiplier()).trim_suffix(".0").replace(".", ",")
+	var multiplier := _multiplier_text(run.action_multiplier() * run.rail_multiplier)
 	var font_size := 26 + roundi(12.0 * (run.action_multiplier() - 1.0))
 	font_size = maxi(14, roundi(font_size * minf(1.0, score_popups.size.x / 650.0)))
 	var popup := _score_popup("%s!  ×%s" % [action, multiplier], font_size,
@@ -546,6 +575,8 @@ func _update_camera(delta: float) -> void:
 
 
 func _new_round() -> void:
+	run.begin_player_turn()
+	_refresh_rail_meter()
 	action_camera.new_shot()
 	_end_player_drag()
 	_clear_links()
@@ -749,12 +780,8 @@ func _on_board(point: Vector3) -> Vector3:
 func _edge_distance(start: Vector3, direction: Vector3, margin := 0.015) -> float:
 	var origin := board_pivot.to_local(start)
 	var local_direction := board_pivot.global_basis.inverse() * direction
-	var distance := INF
-	for normal: Vector3 in EDGE_NORMALS:
-		var speed := local_direction.dot(normal)
-		if speed > 0.0001:
-			distance = minf(distance, (BOARD_APOTHEM - margin - origin.dot(normal)) / speed)
-	return maxf(distance, 0.0)
+	return Rails.ray_exit_distance(Vector2(origin.x, origin.z),
+		Vector2(local_direction.x, local_direction.z), TABLE_RADIUS - margin)
 
 func _slide_distance(speed: float) -> float:
 	var drag := Checker.NORMAL_DAMP
@@ -773,6 +800,11 @@ func _draw_trajectory(piece: Checker, shot: Vector3) -> void:
 			break
 		var direction := velocity / speed
 		var distance := minf(_slide_distance(speed), _edge_distance(origin, direction))
+		var local_origin := board_pivot.to_local(origin)
+		var local_direction := board_pivot.global_basis.inverse() * direction
+		var rail := rails.trace(local_origin, local_direction, distance)
+		if rail != null:
+			distance = rail.distance
 		var target: Checker
 		for other in pieces:
 			if other == piece or other == previous or other.falling or other.is_intangible():
@@ -794,10 +826,10 @@ func _draw_trajectory(piece: Checker, shot: Vector3) -> void:
 			while dash_offset < distance:
 				_draw_line(preview_mesh, origin + direction * dash_offset, origin + direction * minf(dash_offset + 0.055, distance), 0.011)
 				dash_offset += 0.10
-		if not target:
+		if target == null and (rail == null or (rails.kind_at(rail.side) == Rails.Kind.TELEPORT
+				and not rails.exits_from(rail.side).is_empty())):
 			break
 		origin += direction * distance
-		var normal := origin.direction_to(_on_board(target.global_position))
 		# Estimate speed at impact with the same sliding and damping as a normal checker.
 		var low := 0.0
 		var high := speed
@@ -807,10 +839,17 @@ func _draw_trajectory(piece: Checker, shot: Vector3) -> void:
 			if _slide_distance(guess) < remaining: low = guess
 			else: high = guess
 		velocity = direction * (low + high) * 0.5
-		var bounce := piece.contact_material.bounce + target.contact_material.bounce
-		var share := target.mass / (piece.mass + target.mass)
-		velocity -= normal * velocity.dot(normal) * (1.0 + bounce) * share
-		previous = target
+		if target != null:
+			var normal := origin.direction_to(_on_board(target.global_position))
+			var bounce := piece.contact_material.bounce + target.contact_material.bounce
+			var share := target.mass / (piece.mass + target.mass)
+			velocity -= normal * velocity.dot(normal) * (1.0 + bounce) * share
+			previous = target
+		else:
+			velocity = board_pivot.global_basis * rails.reflected_velocity(rail.side,
+				local_direction * velocity.length(), rail.normal)
+			origin -= (board_pivot.global_basis * rail.normal) * 0.006
+			previous = piece
 	if displayed:
 		preview_mesh.surface_end()
 		preview.show()
@@ -898,7 +937,7 @@ func _update_player_hand(delta: float) -> void:
 	var hover_hit: Variant = Plane(Vector3.UP, BOARD_TOP + PlayerHand.HOVER_HEIGHT) \
 		.intersects_ray(ray_start, ray_direction)
 	# Keep the hand on the cursor ray even when it points above the tabletop.
-	var depth := -camera.to_local(board_pivot.global_position).z + BOARD_APOTHEM
+	var depth := -camera.to_local(board_pivot.global_position).z + TABLE_RADIUS
 	if hover_hit != null:
 		depth = minf(depth, -camera.to_local(hover_hit).z)
 	var target := camera.project_position(cursor, depth)
@@ -943,6 +982,7 @@ func _begin_shot_resolution() -> void:
 	if turn == 0:
 		turn_start_score = run.score
 		run.begin_player_turn()
+		_refresh_rail_meter()
 	action_camera.new_shot()
 	phase = "moving"
 	shot_knockouts.fill(false)
@@ -955,10 +995,8 @@ func _is_off_board(world_position: Vector3, margin := 0.0) -> bool:
 	return _is_outside_board(board_pivot.to_local(world_position), margin)
 
 func _is_outside_board(local: Vector3, margin: float) -> bool:
-	var x := absf(local.x)
-	var z := absf(local.z)
-	# The board has one pair of edges parallel to Z and two pairs at 60 degrees.
-	return maxf(x, 0.5 * x + 0.8660254 * z) > BOARD_APOTHEM - margin
+	var radius := TABLE_RADIUS - margin
+	return Vector2(local.x, local.z).length_squared() > radius * radius
 
 func _queue_contact(other: Checker, body: Checker) -> void:
 	if phase == "moving":
@@ -968,19 +1006,24 @@ func _pair_id(a: Checker, b: Checker) -> Vector2i:
 	return Vector2i(mini(a.slot + a.side * 100, b.slot + b.side * 100),
 		maxi(a.slot + a.side * 100, b.slot + b.side * 100))
 
-func _resolve_contacts() -> void:
+func _resolve_contacts(departing_piece: Checker = null) -> void:
 	var processed := {}
+	var pending: Array[Array] = []
 	for pair in contacts:
 		var a: Checker = pair[0]
 		var b: Checker = pair[1]
 		if not is_instance_valid(a) or not is_instance_valid(b) or a.falling or b.falling:
 			continue
+		if departing_piece != null and a != departing_piece and b != departing_piece:
+			pending.append(pair)
+			continue
 		var key := _pair_id(a, b)
 		if not processed.has(key):
-			_touch(a, b, _on_board(a.global_position).direction_to(_on_board(b.global_position)))
+			var direction := Checker.from_plane(b.planar_body.position - a.planar_body.position).normalized()
+			_touch(a, b, board_pivot.global_basis * direction)
 			processed[key] = true
-	contacts.clear()
-	if phasing_piece != null:
+	contacts = pending
+	if phasing_piece != null and (departing_piece == null or departing_piece == phasing_piece):
 		_resolve_ghost_contacts()
 
 func _resolve_ghost_contacts() -> void:
@@ -1217,16 +1260,97 @@ func _draw_ring(center: Vector3, radius: float, width: float, color: Color) -> v
 		_draw_line(effects_mesh, from, to, width)
 
 func _contain_piece(piece: Checker, margin: float) -> void:
-	var point := piece.position
+	var radial := piece.position.slide(Vector3.UP)
+	var radius := TABLE_RADIUS - margin
+	if radial.length_squared() <= radius * radius:
+		return
+	var normal := radial.normalized()
+	var point := normal * radius + Vector3.UP * piece.position.y
 	var velocity := Checker.from_plane(piece.planar_body.linear_velocity)
-	for iteration in 2:
-		for normal: Vector3 in EDGE_NORMALS:
-			var overshoot := point.dot(normal) - (BOARD_APOTHEM - margin)
-			if overshoot > 0:
-				point -= normal * overshoot
-				velocity -= normal * maxf(velocity.dot(normal), 0.0)
+	velocity -= normal * maxf(velocity.dot(normal), 0.0)
 	piece.place_on_board(point, piece.rotation.y)
 	piece.planar_body.linear_velocity = Checker.to_plane(velocity)
+
+
+func _bounce_on_rail(piece: Checker, previous: Vector3) -> void:
+	if piece.hovering:
+		return
+	var movement := (piece.position - previous).slide(Vector3.UP)
+	var distance := movement.length()
+	if distance <= 0.00001:
+		return
+	var direction := movement / distance
+	var contact := rails.trace(previous, direction, distance)
+	if contact == null:
+		return
+	var side := contact.side
+	var normal := contact.normal
+	var velocity := Checker.from_plane(piece.planar_body.linear_velocity)
+	var speed := velocity.dot(normal)
+	var point := previous + direction * contact.distance - normal * 0.006
+	point.y = piece.position.y
+	var kind := rails.kind_at(side)
+	if speed <= 0.025 and kind != Rails.Kind.TELEPORT:
+		piece.place_on_board(point, piece.rotation.y)
+		return
+	var outgoing := rails.reflected_velocity(side, velocity, normal)
+	var teleported := false
+	if kind == Rails.Kind.TELEPORT:
+		var exits := rails.exits_from(side)
+		while not exits.is_empty():
+			var exit: int = exits.pop_at(rng.randi_range(0, exits.size() - 1))
+			var destination := _rail_exit_position(exit, piece)
+			if destination == Vector3.INF:
+				continue
+			# Resolve entrance contacts before the piece jumps to the exit.
+			_resolve_contacts(piece)
+			_release_piece_links(piece)
+			point = destination
+			outgoing = -point.slide(Vector3.UP).normalized() * maxf(velocity.length(), Rails.TELEPORT_EJECT_SPEED)
+			teleported = true
+			break
+	piece.place_on_board(point, piece.rotation.y)
+	if kind == Rails.Kind.TELEPORT:
+		# Commit the new origin before the physics step integrates the kick.
+		PhysicsServer2D.body_set_state(piece.planar_body.get_rid(), PhysicsServer2D.BODY_STATE_TRANSFORM,
+			piece.planar_body.global_transform)
+	piece.planar_body.sleeping = false
+	piece.planar_body.linear_velocity = Checker.to_plane(outgoing)
+	piece.incoming_velocity = piece.linear_velocity
+	if teleported:
+		checker_trails.forget(piece)
+		piece.reset_physics_interpolation()
+		if piece == phasing_piece:
+			ghost_previous_position = Checker.to_plane(piece.global_position)
+	if speed > 0.25:
+		checker_hit_sound.play()
+		piece.stretch_on_impact(board_pivot.global_basis * normal, clampf(speed / 5.0, 0.1, 0.95))
+	if turn == 0 and run.hit_rail(side, Rails.BONUSES[kind]):
+		_refresh_score()
+		_refresh_rail_meter()
+
+
+func _rail_exit_position(side: int, piece: Checker) -> Vector3:
+	var angle := Rails.slot_angle(side)
+	var clearance := TELEPORT_EXIT_CLEARANCE * Checker.PIXELS_PER_UNIT
+	var clearance_squared := clearance * clearance
+	for offset: float in [0.0, 0.15, -0.15, 0.3, -0.3]:
+		var radial := Rails.radial_direction(angle + offset)
+		var point := radial * (Rails.CONTACT_RADIUS - 0.06) + Vector3.UP * piece.position.y
+		var start := Checker.to_plane(point)
+		var end := Checker.to_plane(point - radial * TELEPORT_EXIT_RUNOUT)
+		var blocked := false
+		for other in pieces:
+			if other == piece or other.falling or other.is_intangible():
+				continue
+			var center := other.planar_body.position
+			var nearest := Geometry2D.get_closest_point_to_segment(center, start, end)
+			if center.distance_squared_to(nearest) < clearance_squared:
+				blocked = true
+				break
+		if not blocked:
+			return point
+	return Vector3.INF
 
 func _resolve_board_edge(piece: Checker) -> void:
 	if not _is_outside_board(piece.position, 0.0):
@@ -1246,17 +1370,11 @@ func _resolve_board_edge(piece: Checker) -> void:
 func _eliminate(piece: Checker) -> void:
 	if piece == phasing_piece:
 		_end_ghost_phase()
-	for i in range(links.size() - 1, -1, -1):
-		if piece in links[i].bodies:
-			_release_link(i)
+	_release_piece_links(piece)
 	piece.fuse_origin = piece.global_position
 	var outward := Vector3.ZERO
 	if not _is_outside_board(piece.position, -Checker.RADIUS - 0.015):
-		var nearest_edge: Vector3 = EDGE_NORMALS[0]
-		for normal: Vector3 in EDGE_NORMALS:
-			if piece.position.dot(normal) > piece.position.dot(nearest_edge):
-				nearest_edge = normal
-		outward = board_pivot.global_basis * nearest_edge
+		outward = board_pivot.global_basis * piece.position.slide(Vector3.UP).normalized()
 	_award(piece, true)
 	piece.leave_board(outward)
 	action_camera.fall(piece, board_pivot.global_position)
@@ -1264,16 +1382,24 @@ func _eliminate(piece: Checker) -> void:
 		shot_knockouts[piece.side] = true
 		beaver_voice.react_to_knockout(piece.side == 1)
 
+
+func _release_piece_links(piece: Checker) -> void:
+	for i in range(links.size() - 1, -1, -1):
+		if piece in links[i].bodies:
+			_release_link(i)
+
 func _physics_process(delta: float) -> void:
 	if phase != "moving": return
 	for p in pieces:
 		if not p.falling:
+			var previous := p.position
 			p.sync_planar_position()
 			var stopping_distance := INF
 			if p.hovering:
 				var direction := p.linear_velocity.normalized()
 				stopping_distance = maxf(_edge_distance(p.global_position, direction, -FLOAT_RANGE), 0.04)
 			p.apply_slide_friction(delta, stopping_distance)
+			_bounce_on_rail(p, previous)
 	_resolve_contacts()
 	var pending := _tick_effects(delta)
 	for link in links:
@@ -1348,7 +1474,7 @@ func _find_ghost_landing(piece: Checker) -> Vector3:
 	if _ghost_landing_is_clear(origin):
 		return origin
 	const SEARCH_STEP := Checker.RADIUS / 3.0
-	var search_rings := ceili(BOARD_APOTHEM * 2.4 / SEARCH_STEP)
+	var search_rings := ceili(TABLE_RADIUS * 2.4 / SEARCH_STEP)
 	for ring in range(1, search_rings + 1):
 		for i in ring * 8:
 			var direction := Vector3.FORWARD.rotated(Vector3.UP, TAU * i / (ring * 8))
@@ -1358,7 +1484,7 @@ func _find_ghost_landing(piece: Checker) -> Vector3:
 	return origin
 
 func _ghost_landing_is_clear(position: Vector3) -> bool:
-	if _is_off_board(position):
+	if _is_off_board(position) or rails.overlaps_disc(board_pivot.to_local(position)):
 		return false
 	for other in pieces:
 		if other.falling or other.is_intangible():

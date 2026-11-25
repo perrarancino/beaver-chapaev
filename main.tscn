@@ -4,8 +4,7 @@
 [ext_resource type="Script" uid="uid://c1vgoyfxbt0c0" path="res://beaver.gd" id="beaver"]
 [ext_resource type="PackedScene" uid="uid://5q3aevj4vh6p" path="res://assets/beaver/beaver.glb" id="beaver_model"]
 [ext_resource type="Script" uid="uid://bwgvrarpwbtj8" path="res://beaver_voice.gd" id="beaver_voice"]
-[ext_resource type="PackedScene" uid="uid://b8bn0ti6qf7qq" path="res://assets/boards/three_player_board.glb" id="board"]
-[ext_resource type="Shader" uid="uid://b1wgn4ctlvh17" path="res://assets/table/board_contact_shadow.gdshader" id="board_contact_shadow"]
+[ext_resource type="Script" path="res://edge_rails.gd" id="rails"]
 [ext_resource type="AudioStream" uid="uid://jaw07lv70x3y" path="res://assets/FX/audio/checker_explosion.wav" id="checker_explosion_audio"]
 [ext_resource type="AudioStream" uid="uid://deh6ft48rfac8" path="res://assets/FX/audio/checker_ghost_touch.wav" id="checker_ghost_touch_audio"]
 [ext_resource type="AudioStream" uid="uid://5ydy4qo6mscs" path="res://assets/FX/audio/checker_hit.wav" id="checker_hit_audio"]
@@ -34,14 +33,6 @@ ambient_light_source = 2
 ambient_light_color = Color(0.57, 0.49, 0.41, 1)
 ambient_light_energy = 0.11
 tonemap_mode = 2
-
-[sub_resource type="ShaderMaterial" id="board_shadow_material"]
-render_priority = -3
-shader = ExtResource("board_contact_shadow")
-
-[sub_resource type="PlaneMesh" id="board_shadow_mesh"]
-material = SubResource("board_shadow_material")
-size = Vector2(4.8, 5.55)
 
 [sub_resource type="ShaderMaterial" id="arrow_material"]
 resource_local_to_scene = true
@@ -90,7 +81,7 @@ playback_type = 1
 environment = SubResource("env")
 
 [node name="Camera3D" type="Camera3D" parent="." unique_id=1590391247]
-transform = Transform3D(1, 0, 0, 0, 0.9781476, 0.2079117, 0, -0.2079117, 0.9781476, 0, 2.15, 5.48)
+transform = Transform3D(1, 0, 0, 0, 0.9781476, 0.2079117, 0, -0.2079117, 0.9781476, 0, 2.15, 5.8)
 current = true
 fov = 51.5
 
@@ -125,15 +116,11 @@ spot_angle_attenuation = 0.65
 [node name="BoardPivot" type="Node3D" parent="." unique_id=321082817]
 
 [node name="Table" parent="BoardPivot" unique_id=1151933504 instance=ExtResource("round_table")]
-transform = Transform3D(2.992, 0, 0, 0, 3.16, 0, 0, 0, 2.992, 0, -0.35115, 0)
+transform = Transform3D(2.992, 0, 0, 0, 3.16, 0, 0, 0, 2.992, 0, -0.21615, 0)
 
-[node name="BoardContactShadow" type="MeshInstance3D" parent="BoardPivot" unique_id=422928002]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.1305, 0)
-cast_shadow = 0
-mesh = SubResource("board_shadow_mesh")
-
-[node name="Board" parent="BoardPivot" unique_id=141650672 instance=ExtResource("board")]
-transform = Transform3D(1.06, 0, 0, 0, 1, 0, 0, 0, 1.06, 0, -0.132, 0)
+[node name="Rails" type="Node3D" parent="BoardPivot"]
+position = Vector3(0, 0.003, 0)
+script = ExtResource("rails")
 
 [node name="Izba" parent="." unique_id=1736883300 instance=ExtResource("izba")]
 transform = Transform3D(1.4, 0, 0, 0, 1, 0, 0, 0, 1.12, -0.009428501, 0.0049607754, -0.00258708)

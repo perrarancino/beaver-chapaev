@@ -13,6 +13,9 @@ var score := 0
 var streak := 0
 var actions := 0
 var hit_slots: Dictionary[int, bool] = {}
+var hit_rails: Array[int] = []
+var rail_multiplier := 1.0
+var turn_base_points := 0
 
 var stage := 1
 var wins := 0
@@ -79,6 +82,19 @@ func _reward_slot(icon: Checker.Icon) -> int:
 func begin_player_turn() -> void:
 	actions = 0
 	hit_slots.clear()
+	hit_rails.clear()
+	rail_multiplier = 1.0
+	turn_base_points = 0
+
+
+func hit_rail(side: int, multiplier: float) -> bool:
+	if side in hit_rails:
+		return false
+	hit_rails.append(side)
+	var previous := roundi(turn_base_points * rail_multiplier)
+	rail_multiplier *= multiplier
+	score += roundi(turn_base_points * rail_multiplier) - previous
+	return true
 
 
 func action_multiplier() -> float:
@@ -94,7 +110,9 @@ func award(slot: int, knockout: bool) -> int:
 		streak += 1
 	actions += 1
 	var base := 500 if knockout else 100
-	var points := roundi(base * action_multiplier() * streak)
+	var previous := roundi(turn_base_points * rail_multiplier)
+	turn_base_points += roundi(base * action_multiplier() * streak)
+	var points := roundi(turn_base_points * rail_multiplier) - previous
 	score += points
 	return points
 
