@@ -23,6 +23,7 @@ const FLOOR_Y := -2.1
 const ROOM_FLOOR := Rect2(-7.50, -9.30, 14.98, 16.72)
 const PIECE_Y := 0.07
 const TURN_REST_TIME := 0.35
+const MIN_RAIL_BOUNCE_SPEED := 0.025
 const CAMERA_SCROLL_STEP := 0.125
 const CAMERA_SCROLL_SPEED := 11.0
 const BOARD_ROTATION_SPEED := 0.006
@@ -38,8 +39,6 @@ const MIN_PULL_STRENGTH := 0.4
 const MAX_PULL_STRENGTH := 2.8
 const HAND_HOVER_CEILING := 3.6
 const DIAMETER := Checker.RADIUS * 2.0
-const TELEPORT_EXIT_CLEARANCE := DIAMETER + 0.008
-const TELEPORT_EXIT_RUNOUT := 0.40
 var pieces: Array[Checker] = []
 var formations: Array[PackedVector3Array] = [PackedVector3Array(), PackedVector3Array()]
 var player_setup: Array[Checker.Icon] = []
@@ -51,6 +50,9 @@ var links: Array[Dictionary] = []
 var lightning: Array[Dictionary] = []
 var selected: Checker
 var aiming := false
+var grabbing_nose := false
+var nose_drag_plane := Plane()
+var nose_drag_origin := Vector3.ZERO
 var drag_start := Vector2.ZERO
 var strike_offset := Vector3.ZERO
 var turn := 0 # 0 player, 1 beaver
@@ -79,8 +81,6 @@ var beaver_subtitle: Label
 var volume_control: PanelContainer
 var score_hud := VBoxContainer.new()
 var score_label: Label
-var rail_label: Label
-var rail_ticks: Array[ColorRect] = []
 var score_popups := Control.new()
 var pending_popups: Array[Label] = []
 var turn_start_score := 0
@@ -213,22 +213,6 @@ func _build_score_hud(root: Control) -> void:
 	score_hud.alignment = BoxContainer.ALIGNMENT_END
 	score_hud.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	score_hud.add_theme_constant_override("separation", 8)
-	var rail_meter := HBoxContainer.new()
-	rail_meter.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	rail_meter.add_theme_constant_override("separation", 9)
-	score_hud.add_child(rail_meter)
-	var ticks := HBoxContainer.new()
-	ticks.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ticks.add_theme_constant_override("separation", 4)
-	ticks.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	rail_meter.add_child(ticks)
-	for _slot in Rails.MAX_RAILS:
-		var tick := ColorRect.new()
-		tick.custom_minimum_size = Vector2(18, 3)
-		tick.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		ticks.add_child(tick)
-		rail_ticks.append(tick)
-	rail_label = _label(rail_meter, "", 15, Color("f6e2be"))
 	score_label = _label(score_hud, "", 18, Color("fff1d5"))
 	score_label.add_theme_stylebox_override("normal", _panel_style(Color("30231bee")))
 	root.add_child(score_popups)
@@ -240,13 +224,6 @@ func _build_score_hud(root: Control) -> void:
 func _refresh_score() -> void:
 	score_label.text = "Очки  %d     Серия ходов  %d  ·  ×%d" % [
 		run.score, run.streak, maxi(1, run.streak)]
-
-
-func _refresh_rail_meter() -> void:
-	rail_label.text = "Бортики  ×%s" % _multiplier_text(run.rail_multiplier)
-	for i in rail_ticks.size():
-		rail_ticks[i].color = Rails.COLORS[rails.kind_at(run.hit_rails[i])] if i < run.hit_rails.size() \
-			else Color("ebd3ac60")
 
 
 func _multiplier_text(multiplier: float) -> String:
@@ -261,7 +238,7 @@ func _award(piece: Checker, knockout := false) -> void:
 		return
 	_refresh_score()
 	var action := "Вылет" if knockout else "Попадание"
-	var multiplier := _multiplier_text(run.action_multiplier() * run.rail_multiplier)
+	var multiplier := _multiplier_text(run.action_multiplier())
 	var font_size := 26 + roundi(12.0 * (run.action_multiplier() - 1.0))
 	font_size = maxi(14, roundi(font_size * minf(1.0, score_popups.size.x / 650.0)))
 	var popup := _score_popup("%s!  ×%s" % [action, multiplier], font_size,
@@ -576,7 +553,6 @@ func _update_camera(delta: float) -> void:
 
 func _new_round() -> void:
 	run.begin_player_turn()
-	_refresh_rail_meter()
 	action_camera.new_shot()
 	_end_player_drag()
 	_clear_links()
@@ -626,7 +602,10 @@ func _input(event: InputEvent) -> void:
 		if not event.echo:
 			_skip_intro()
 		return
-	# A drag that started on the board can end over the volume control.
+	if grabbing_nose and _handle_nose_drag(event):
+		get_viewport().set_input_as_handled()
+		return
+	# A drag can end over the volume control.
 	if event is InputEventMouseMotion:
 		if hand_waiting_for_motion and _is_player_turn() and action_camera.mode == action_camera.Mode.IDLE \
 				and not event.relative.is_zero_approx():
@@ -676,6 +655,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not _is_player_turn() or action_camera.mode != action_camera.Mode.IDLE or aiming or orbiting:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		if _grab_beaver_nose(event.position):
+			get_viewport().set_input_as_handled()
+			return
 		var ray_start := camera.project_ray_origin(event.position)
 		var hit := _piece_hit(event.position)
 		var picked := hit.get("collider") as Checker
@@ -689,6 +671,62 @@ func _unhandled_input(event: InputEvent) -> void:
 			aiming = true
 		elif _is_table_drag(ray_start, camera.project_ray_normal(event.position)):
 			_begin_board_rotation()
+
+
+func _on_beaver_nose(cursor: Vector2, nose: Transform3D, reach := 1.0) -> bool:
+	var ray := camera.project_ray_normal(cursor)
+	if ray.dot(nose.basis.z) > -0.30:
+		return false
+	var plane := Plane(nose.basis.z, nose.origin)
+	var hit: Variant = plane.intersects_ray(camera.project_ray_origin(cursor), ray)
+	if hit == null:
+		return false
+	var local: Vector3 = nose.basis.transposed() * (hit - nose.origin)
+	return Vector2(local.x / 0.31, local.y / 0.23).length_squared() <= reach * reach
+
+
+func _grab_beaver_nose(cursor: Vector2) -> bool:
+	var nose := beaver.nose_transform()
+	if not _on_beaver_nose(cursor, nose):
+		return false
+	nose_drag_plane = Plane(camera.global_basis.z, nose.origin)
+	var start: Variant = nose_drag_plane.intersects_ray(camera.project_ray_origin(cursor),
+		camera.project_ray_normal(cursor))
+	if start == null:
+		return false
+	nose_drag_origin = start
+	grabbing_nose = true
+	hand_waiting_for_motion = false
+	camera_view_target = camera_view
+	beaver.grab_nose()
+	beaver_voice.react_to_nose_pull()
+	return true
+
+
+func _handle_nose_drag(event: InputEvent) -> bool:
+	if event is InputEventMouseMotion:
+		if (event.button_mask & MOUSE_BUTTON_MASK_LEFT) == 0:
+			_release_beaver_nose()
+		else:
+			var point: Variant = nose_drag_plane.intersects_ray(camera.project_ray_origin(event.position),
+				camera.project_ray_normal(event.position))
+			if point != null:
+				beaver.pull_nose(point - nose_drag_origin)
+				if event.relative.length_squared() > 49.0:
+					beaver_voice.react_to_nose_pull()
+		return true
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+			_release_beaver_nose()
+		return true
+	return false
+
+
+func _release_beaver_nose() -> void:
+	if grabbing_nose:
+		grabbing_nose = false
+		beaver.release_nose()
+
 
 func _piece_hit(cursor: Vector2) -> Dictionary:
 	var origin := camera.project_ray_origin(cursor)
@@ -728,6 +766,7 @@ func _cancel_aim() -> void:
 	preview.hide()
 
 func _end_player_drag() -> void:
+	_release_beaver_nose()
 	_finish_board_rotation()
 	_cancel_aim()
 
@@ -792,6 +831,7 @@ func _draw_trajectory(piece: Checker, shot: Vector3) -> void:
 	var origin := _on_board(piece.global_position)
 	var velocity := shot * SHOT_IMPULSE / piece.mass
 	var previous := piece
+	var rail_boost_available := true
 	var displayed := false
 	preview_mesh.clear_surfaces()
 	for segment in 4:
@@ -826,8 +866,7 @@ func _draw_trajectory(piece: Checker, shot: Vector3) -> void:
 			while dash_offset < distance:
 				_draw_line(preview_mesh, origin + direction * dash_offset, origin + direction * minf(dash_offset + 0.055, distance), 0.011)
 				dash_offset += 0.10
-		if target == null and (rail == null or (rails.kind_at(rail.side) == Rails.Kind.TELEPORT
-				and not rails.exits_from(rail.side).is_empty())):
+		if target == null and rail == null:
 			break
 		origin += direction * distance
 		# Estimate speed at impact with the same sliding and damping as a normal checker.
@@ -846,8 +885,12 @@ func _draw_trajectory(piece: Checker, shot: Vector3) -> void:
 			velocity -= normal * velocity.dot(normal) * (1.0 + bounce) * share
 			previous = target
 		else:
-			velocity = board_pivot.global_basis * rails.reflected_velocity(rail.side,
-				local_direction * velocity.length(), rail.normal)
+			var local_velocity := local_direction * velocity.length()
+			if local_velocity.dot(rail.normal) <= MIN_RAIL_BOUNCE_SPEED:
+				break
+			velocity = board_pivot.global_basis * Rails.reflected_velocity(
+				local_velocity, rail.normal, rail_boost_available)
+			rail_boost_available = false
 			origin -= (board_pivot.global_basis * rail.normal) * 0.006
 			previous = piece
 	if displayed:
@@ -912,15 +955,25 @@ func _aim_vector(cursor: Vector2) -> Vector3:
 	return origin.direction_to(hit) * _pull_strength(drag)
 
 func _update_player_hand(delta: float) -> void:
+	if grabbing_nose and (not _is_player_turn() or action_camera.mode != action_camera.Mode.IDLE):
+		_release_beaver_nose()
 	if action_camera.mode != action_camera.Mode.IDLE:
 		player_hand.hide()
 		return
 	var cursor := get_viewport().get_mouse_position()
+	if grabbing_nose:
+		player_hand.reach_for_nose(delta, beaver.nose_transform(), camera.global_basis, true)
+		return
 	var bounds := get_viewport().get_visible_rect()
 	if not _is_player_turn() or hand_waiting_for_motion or orbiting or not bounds.has_point(cursor) \
 			or (not aiming and volume_control.get_global_rect().has_point(cursor)):
 		player_hand.withdraw()
 		return
+	if not aiming:
+		var nose := beaver.nose_transform()
+		if _on_beaver_nose(cursor, nose, 1.60):
+			player_hand.reach_for_nose(delta, nose, camera.global_basis, false)
+			return
 
 	var facing := (-camera.global_basis.z).slide(Vector3.UP).normalized()
 	if aiming:
@@ -982,13 +1035,13 @@ func _begin_shot_resolution() -> void:
 	if turn == 0:
 		turn_start_score = run.score
 		run.begin_player_turn()
-		_refresh_rail_meter()
 	action_camera.new_shot()
 	phase = "moving"
 	shot_knockouts.fill(false)
 	for piece in pieces:
 		piece.incoming_velocity = Vector3.ZERO
 		piece.lightning_used = false
+		piece.rail_boost_used = false
 	_reset_stillness()
 
 func _is_off_board(world_position: Vector3, margin := 0.0) -> bool:
@@ -1006,24 +1059,20 @@ func _pair_id(a: Checker, b: Checker) -> Vector2i:
 	return Vector2i(mini(a.slot + a.side * 100, b.slot + b.side * 100),
 		maxi(a.slot + a.side * 100, b.slot + b.side * 100))
 
-func _resolve_contacts(departing_piece: Checker = null) -> void:
+func _resolve_contacts() -> void:
 	var processed := {}
-	var pending: Array[Array] = []
 	for pair in contacts:
 		var a: Checker = pair[0]
 		var b: Checker = pair[1]
 		if not is_instance_valid(a) or not is_instance_valid(b) or a.falling or b.falling:
-			continue
-		if departing_piece != null and a != departing_piece and b != departing_piece:
-			pending.append(pair)
 			continue
 		var key := _pair_id(a, b)
 		if not processed.has(key):
 			var direction := Checker.from_plane(b.planar_body.position - a.planar_body.position).normalized()
 			_touch(a, b, board_pivot.global_basis * direction)
 			processed[key] = true
-	contacts = pending
-	if phasing_piece != null and (departing_piece == null or departing_piece == phasing_piece):
+	contacts.clear()
+	if phasing_piece != null:
 		_resolve_ghost_contacts()
 
 func _resolve_ghost_contacts() -> void:
@@ -1283,74 +1332,23 @@ func _bounce_on_rail(piece: Checker, previous: Vector3) -> void:
 	var contact := rails.trace(previous, direction, distance)
 	if contact == null:
 		return
-	var side := contact.side
 	var normal := contact.normal
 	var velocity := Checker.from_plane(piece.planar_body.linear_velocity)
 	var speed := velocity.dot(normal)
 	var point := previous + direction * contact.distance - normal * 0.006
 	point.y = piece.position.y
-	var kind := rails.kind_at(side)
-	if speed <= 0.025 and kind != Rails.Kind.TELEPORT:
-		piece.place_on_board(point, piece.rotation.y)
-		return
-	var outgoing := rails.reflected_velocity(side, velocity, normal)
-	var teleported := false
-	if kind == Rails.Kind.TELEPORT:
-		var exits := rails.exits_from(side)
-		while not exits.is_empty():
-			var exit: int = exits.pop_at(rng.randi_range(0, exits.size() - 1))
-			var destination := _rail_exit_position(exit, piece)
-			if destination == Vector3.INF:
-				continue
-			# Resolve entrance contacts before the piece jumps to the exit.
-			_resolve_contacts(piece)
-			_release_piece_links(piece)
-			point = destination
-			outgoing = -point.slide(Vector3.UP).normalized() * maxf(velocity.length(), Rails.TELEPORT_EJECT_SPEED)
-			teleported = true
-			break
 	piece.place_on_board(point, piece.rotation.y)
-	if kind == Rails.Kind.TELEPORT:
-		# Commit the new origin before the physics step integrates the kick.
-		PhysicsServer2D.body_set_state(piece.planar_body.get_rid(), PhysicsServer2D.BODY_STATE_TRANSFORM,
-			piece.planar_body.global_transform)
+	if speed <= MIN_RAIL_BOUNCE_SPEED:
+		return
+	var boost := not piece.rail_boost_used
+	var outgoing := Rails.reflected_velocity(velocity, normal, boost)
 	piece.planar_body.sleeping = false
 	piece.planar_body.linear_velocity = Checker.to_plane(outgoing)
 	piece.incoming_velocity = piece.linear_velocity
-	if teleported:
-		checker_trails.forget(piece)
-		piece.reset_physics_interpolation()
-		if piece == phasing_piece:
-			ghost_previous_position = Checker.to_plane(piece.global_position)
+	piece.rail_boost_used = true
 	if speed > 0.25:
 		checker_hit_sound.play()
 		piece.stretch_on_impact(board_pivot.global_basis * normal, clampf(speed / 5.0, 0.1, 0.95))
-	if turn == 0 and run.hit_rail(side, Rails.BONUSES[kind]):
-		_refresh_score()
-		_refresh_rail_meter()
-
-
-func _rail_exit_position(side: int, piece: Checker) -> Vector3:
-	var angle := Rails.slot_angle(side)
-	var clearance := TELEPORT_EXIT_CLEARANCE * Checker.PIXELS_PER_UNIT
-	var clearance_squared := clearance * clearance
-	for offset: float in [0.0, 0.15, -0.15, 0.3, -0.3]:
-		var radial := Rails.radial_direction(angle + offset)
-		var point := radial * (Rails.CONTACT_RADIUS - 0.06) + Vector3.UP * piece.position.y
-		var start := Checker.to_plane(point)
-		var end := Checker.to_plane(point - radial * TELEPORT_EXIT_RUNOUT)
-		var blocked := false
-		for other in pieces:
-			if other == piece or other.falling or other.is_intangible():
-				continue
-			var center := other.planar_body.position
-			var nearest := Geometry2D.get_closest_point_to_segment(center, start, end)
-			if center.distance_squared_to(nearest) < clearance_squared:
-				blocked = true
-				break
-		if not blocked:
-			return point
-	return Vector3.INF
 
 func _resolve_board_edge(piece: Checker) -> void:
 	if not _is_outside_board(piece.position, 0.0):

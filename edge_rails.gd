@@ -1,72 +1,55 @@
 extends Node3D
 
-enum Kind { OPEN, WOOD, SPRING, TELEPORT }
-
 # The imported tabletop measures 2.871–2.874 m from its center to the rim.
 const TABLE_RADIUS := 2.872
 const INNER_RADIUS := 2.59
 const OUTER_RADIUS := 2.843
 const CONTACT_RADIUS := INNER_RADIUS - Checker.RADIUS
-const TELEPORT_EJECT_SPEED := 3.2
+const BOOST_MULTIPLIER := 1.25
 const SLOT_COUNT := 6
 const SLOT_ANGLE := TAU / SLOT_COUNT
 const ARC_HALF_ANGLE := PI * 27.0 / 180.0
-const MAX_RAILS := 5
 const MODEL := preload("res://assets/table/rails/painted_arcs.glb")
-const MODEL_VARIANTS := ["", "Wood", "Spring", "Teleport"]
-const BONUSES := [1.0, 1.10, 1.25, 1.50]
-const COLORS := [Color.TRANSPARENT, Color("d29b54"), Color("ce6888"), Color("4b9e99")]
 
 class Contact:
-	var side: int
 	var distance: float
 	var normal: Vector3
 
-	func _init(slot: int, travel: float, inward: Vector2) -> void:
-		side = slot
+	func _init(travel: float, into_rail: Vector2) -> void:
 		distance = travel
-		normal = Vector3(inward.x, 0.0, inward.y)
+		normal = Vector3(into_rail.x, 0.0, into_rail.y)
 
 class Cap:
-	var side: int
 	var radial: Vector2
 	var inward: Vector2
 
-	func _init(slot: int, angle: float, end_sign: float) -> void:
-		side = slot
+	func _init(angle: float, end_sign: float) -> void:
 		radial = Vector2.from_angle(angle + ARC_HALF_ANGLE * end_sign)
 		inward = Vector2(radial.y, -radial.x) * end_sign
 
-@export var sides: Array[Kind] = [Kind.WOOD, Kind.OPEN, Kind.SPRING, Kind.OPEN, Kind.TELEPORT, Kind.OPEN]
+@export var rail_slots: Array[int] = [0, 2, 4]
 
-var _active: Array[int] = []
 var _caps: Array[Cap] = []
 
 
 func _ready() -> void:
 	var source := MODEL.instantiate()
-	for side in SLOT_COUNT:
-		var kind := sides[side] if side < sides.size() else Kind.OPEN
-		if kind == Kind.OPEN or _active.size() == MAX_RAILS:
+	var model := source.get_node("Wood") as MeshInstance3D
+	for slot in SLOT_COUNT:
+		if slot not in rail_slots:
 			continue
-		var model := source.get_node(MODEL_VARIANTS[kind]) as MeshInstance3D
 		var segment := MeshInstance3D.new()
-		segment.name = "Rail%d" % (side + 1)
+		segment.name = "Rail%d" % (slot + 1)
 		segment.mesh = model.mesh
-		segment.rotation.y = -slot_angle(side)
+		segment.rotation.y = -slot_angle(slot)
 		add_child(segment)
-		_active.append(side)
 		for end_sign in [-1.0, 1.0]:
-			_caps.append(Cap.new(side, slot_angle(side), end_sign))
+			_caps.append(Cap.new(slot_angle(slot), end_sign))
 	source.free()
 
 
 static func slot_angle(side: int) -> float:
 	return side * SLOT_ANGLE
-
-
-static func radial_direction(angle: float) -> Vector3:
-	return Vector3(cos(angle), 0.0, sin(angle))
 
 
 static func ray_exit_distance(origin: Vector2, direction: Vector2, radius: float) -> float:
@@ -80,16 +63,6 @@ static func ray_exit_distance(origin: Vector2, direction: Vector2, radius: float
 	return maxf((-projection + sqrt(discriminant)) / direction_squared, 0.0)
 
 
-func kind_at(side: int) -> Kind:
-	return sides[side] if side in _active else Kind.OPEN
-
-
-func exits_from(side: int) -> Array[int]:
-	var exits := _active.duplicate()
-	exits.erase(side)
-	return exits
-
-
 func overlaps_disc(point: Vector3) -> bool:
 	var position := Vector2(point.x, point.z)
 	var radius := position.length()
@@ -97,7 +70,7 @@ func overlaps_disc(point: Vector3) -> bool:
 		return false
 	var angle := position.angle()
 	var side := posmod(roundi(angle / SLOT_ANGLE), SLOT_COUNT)
-	if side in _active and absf(angle_difference(slot_angle(side), angle)) <= ARC_HALF_ANGLE:
+	if side in rail_slots and absf(angle_difference(slot_angle(side), angle)) <= ARC_HALF_ANGLE:
 		return true
 	for cap in _caps:
 		var nearest := cap.radial * clampf(position.dot(cap.radial), INNER_RADIUS, OUTER_RADIUS)
@@ -109,7 +82,7 @@ func overlaps_disc(point: Vector3) -> bool:
 func trace(from: Vector3, direction: Vector3, travel: float) -> Contact:
 	var origin := Vector2(from.x, from.z)
 	var origin_radius := origin.length()
-	if travel <= 0.00001 or origin_radius + travel < CONTACT_RADIUS or _active.is_empty():
+	if travel <= 0.00001 or origin_radius + travel < CONTACT_RADIUS or rail_slots.is_empty():
 		return null
 	var heading := Vector2(direction.x, direction.z).normalized()
 	var closest := travel
@@ -119,9 +92,9 @@ func trace(from: Vector3, direction: Vector3, travel: float) -> Contact:
 		var normal := (origin + heading * distance).normalized()
 		var angle := normal.angle()
 		var side := posmod(roundi(angle / SLOT_ANGLE), SLOT_COUNT)
-		if side in _active and absf(angle_difference(slot_angle(side), angle)) <= ARC_HALF_ANGLE \
+		if side in rail_slots and absf(angle_difference(slot_angle(side), angle)) <= ARC_HALF_ANGLE \
 				and heading.dot(normal) > 0.0001:
-			contact = Contact.new(side, distance, normal)
+			contact = Contact.new(distance, normal)
 			closest = distance
 	for cap in _caps:
 		var cap_contact := _trace_cap(cap, origin, heading, closest)
@@ -143,7 +116,7 @@ func _trace_cap(cap: Cap, origin: Vector2, heading: Vector2, limit: float) -> Co
 		var radial_distance := (origin + heading * distance).dot(cap.radial)
 		if distance <= limit and radial_distance >= INNER_RADIUS and radial_distance <= OUTER_RADIUS:
 			limit = distance
-			contact = Contact.new(cap.side, distance, cap.inward)
+			contact = Contact.new(distance, cap.inward)
 	for radius: float in [INNER_RADIUS, OUTER_RADIUS]:
 		var corner := cap.radial * radius
 		var offset := origin - corner
@@ -161,15 +134,9 @@ func _trace_cap(cap: Cap, origin: Vector2, heading: Vector2, limit: float) -> Co
 		if heading.dot(normal) <= 0.0001:
 			continue
 		limit = distance
-		contact = Contact.new(cap.side, distance, normal)
+		contact = Contact.new(distance, normal)
 	return contact
 
 
-func reflected_velocity(side: int, velocity: Vector3, normal: Vector3) -> Vector3:
-	var kind := kind_at(side)
-	if kind == Kind.TELEPORT:
-		return -normal * maxf(velocity.dot(normal), TELEPORT_EJECT_SPEED)
-	var reflected := velocity.bounce(normal)
-	if kind == Kind.SPRING:
-		return (reflected * 1.35).limit_length(maxf(velocity.length(), 12.0))
-	return reflected * 0.86
+static func reflected_velocity(velocity: Vector3, normal: Vector3, boost: bool) -> Vector3:
+	return velocity.bounce(normal) * (BOOST_MULTIPLIER if boost else 1.0)

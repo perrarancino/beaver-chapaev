@@ -145,6 +145,7 @@ var hovering := false:
 			wind_transition = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
 			wind_transition.tween_method(_set_wind_lift, wind_lift, float(hovering), 0.20)
 var hover_started_turn := -1
+var rail_boost_used := false
 var fall_velocity := Vector3.ZERO
 var _fall_spin := 0.0
 var _sliding_on_table := false

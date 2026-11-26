@@ -22,6 +22,10 @@ const INDEX_FINGER := 1
 const INDEX_COCKED := Vector3(0.59, 1.00, 0.41)
 const INDEX_EXTENDED := Vector3(-0.05, 0.02, 0.01)
 const FINGER_SPREAD := [0.0, 0.065, 0.0, -0.065, -0.13]
+const PINCH_CURL := [
+	Vector3(0.30, -0.19, 0.15), Vector3(0.79, 0.72, 0.35),
+	Vector3(0.97, 1.36, 0.79), Vector3(1.04, 1.48, 0.85), Vector3(1.10, 1.52, 0.85),
+]
 
 var _rig: Skeleton3D
 var _wrist: int
@@ -35,6 +39,7 @@ var _pose := Vector4.ZERO
 var _clock := 0.0
 var _withdrawal: Tween
 var _swinging := false
+var _pinch := 0.0
 
 
 func _ready() -> void:
@@ -69,6 +74,22 @@ func follow(delta: float, target: Vector3, direction: Vector3) -> void:
 
 func aim(delta: float, contact: Vector3, direction: Vector3, power: float) -> void:
 	_track(delta, _windup_tip(contact, direction, power), direction, _load_amount(power))
+
+
+func reach_for_nose(delta: float, nose: Transform3D, view: Basis, grabbed: bool) -> void:
+	if _swinging:
+		return
+	_cancel_withdrawal()
+	var direction := (-nose.basis.z * 0.68 - view.x * 0.58 + view.y * 0.63).normalized()
+	var facing := Basis.looking_at(direction, view.y) * Basis(Vector3.BACK, -0.82)
+	var gap := 0.025 if grabbed else 0.23
+	var target := nose.origin + nose.basis.z * gap
+	if not visible:
+		_enter_from_offscreen(_wrist_at(target, facing, _pinch_center()))
+	var weight := 1.0 - exp(-(34.0 if grabbed else 14.0) * delta)
+	var anchor := _pinch_center().lerp(target, weight)
+	_apply_pose(_pose.lerp(Vector4.ZERO, weight), lerpf(_pinch, 1.0 if grabbed else 0.72, weight))
+	global_transform = _wrist_at(anchor, global_basis.slerp(facing, weight), _pinch_center())
 
 
 func withdraw() -> void:
@@ -148,7 +169,7 @@ func _track(delta: float, target: Vector3, direction: Vector3, load: float) -> v
 	pose.z = clampf(lag.dot(global_basis.x) * 3.6, -1.0, 1.0) * sway_weight \
 		+ sin(_clock * 3.2) * 0.12
 	pose.w = clampf(lag.dot(-global_basis.z) * 3.3, -1.0, 1.0) * sway_weight
-	_apply_pose(_pose.lerp(pose, weight))
+	_apply_pose(_pose.lerp(pose, weight), lerpf(_pinch, 0.0, weight))
 	facing = global_basis.slerp(facing, weight)
 	global_transform = _wrist_at_tip(tip.lerp(target, weight), facing)
 
@@ -162,11 +183,12 @@ func _enter_from_offscreen(goal: Transform3D) -> void:
 func _slide_offscreen(target: Vector3, duration: float) -> Tween:
 	var start := global_position
 	var start_pose := _pose
+	var start_pinch := _pinch
 	_withdrawal = create_tween().set_ignore_time_scale(true)
 	_withdrawal.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	_withdrawal.tween_method(func(t: float) -> void:
 		global_position = start.lerp(target, t)
-		_apply_pose(start_pose.lerp(Vector4.ZERO, t))
+		_apply_pose(start_pose.lerp(Vector4.ZERO, t), start_pinch * (1.0 - t))
 		, 0.0, 1.0, duration)
 	_withdrawal.tween_callback(hide)
 	return _withdrawal
@@ -201,7 +223,17 @@ func _index_tip_world() -> Vector3:
 
 
 func _wrist_at_tip(target: Vector3, facing: Basis) -> Transform3D:
-	return Transform3D(facing, target - facing * to_local(_index_tip_world()))
+	return _wrist_at(target, facing, _index_tip_world())
+
+
+func _wrist_at(target: Vector3, facing: Basis, contact: Vector3) -> Transform3D:
+	return Transform3D(facing, target - facing * to_local(contact))
+
+
+func _pinch_center() -> Vector3:
+	var thumb := _rig.get_bone_global_pose(_fingers[0][2])
+	var pad := _rig.to_global(thumb * Vector3(0.0, 0.041, 0.0))
+	return _index_tip_world().lerp(pad, 0.5)
 
 
 func _windup_tip(contact: Vector3, direction: Vector3, power: float) -> Vector3:
@@ -216,8 +248,9 @@ func _hand_basis(direction: Vector3) -> Basis:
 	return Basis.looking_at(direction.rotated(Vector3.UP, FOREARM_SWEEP) + Vector3.DOWN * 0.20)
 
 
-func _apply_pose(pose: Vector4) -> void:
+func _apply_pose(pose: Vector4, pinch := 0.0) -> void:
 	_pose = pose
+	pinch = 0.0 if pinch < 0.001 else pinch
 	var load := pose.x
 	var snap := pose.y
 	var side_sway := pose.z
@@ -225,13 +258,27 @@ func _apply_pose(pose: Vector4) -> void:
 	_set_joint(_wrist, -0.24 * load + 0.11 * snap + 0.14 * side_sway + 0.31 * forward_sway,
 		-FOREARM_SWEEP * (0.43 + 0.47 * snap) - 0.09 * load + 0.19 * side_sway,
 		0.22 * load - 0.10 * snap + 0.41 * side_sway)
+	if _pinch > 0.0 or pinch > 0.0:
+		for finger in _fingers.size():
+			if finger == INDEX_FINGER:
+				continue
+			var base: Vector3 = RELAXED[finger]
+			_set_finger(finger, base.lerp(PINCH_CURL[finger], pinch))
+		var thumb := _fingers[0]
+		var curl: Vector3 = RELAXED[0].lerp(PINCH_CURL[0], pinch)
+		_set_joint(thumb[0], curl.x, -0.52 * pinch, 0.24 * pinch)
+		_set_joint(thumb[1], curl.y, -0.38 * pinch)
+		_set_joint(thumb[2], curl.z, -0.17 * pinch)
+	_pinch = pinch
 	var relaxed: Vector3 = RELAXED[INDEX_FINGER]
-	_set_finger(INDEX_FINGER, relaxed.lerp(INDEX_COCKED, load).lerp(INDEX_EXTENDED, snap))
+	var index := relaxed.lerp(INDEX_COCKED, load).lerp(INDEX_EXTENDED, snap)
+	index = index.lerp(PINCH_CURL[INDEX_FINGER], _pinch)
+	_set_finger(INDEX_FINGER, index, 0.24 * pinch)
 
 
-func _set_finger(finger: int, curl: Vector3) -> void:
+func _set_finger(finger: int, curl: Vector3, spread := 0.0) -> void:
 	var bones := _fingers[finger]
-	_set_joint(bones[0], curl.x, FINGER_SPREAD[finger])
+	_set_joint(bones[0], curl.x, FINGER_SPREAD[finger] + spread)
 	_set_joint(bones[1], curl.y)
 	_set_joint(bones[2], curl.z)
 

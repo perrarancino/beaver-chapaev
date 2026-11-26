@@ -16,6 +16,13 @@ const MAX_ARM_EXTENSION := 0.25
 const STEP_SPACING := 1.12
 const STEP_HEIGHT := 0.22
 const WALK_SPEED := 4.8
+# Centers of the nose surface in Head bone space for each opponent.
+const NOSE_POINTS := [
+	Vector3(0.0703, 0.3266, 0.5886),
+	Vector3(0.0728, 0.3105, 0.4697),
+	Vector3(0.0883, 0.3979, 0.5348),
+]
+const NOSE_PULL_LIMIT := 0.55
 
 class ShotSetup:
 	var stance: Vector3
@@ -67,9 +74,18 @@ var _reach := 0.0
 var _look_yaw := 0.0
 var _lunge := Vector3.ZERO
 var _busy := false
+var _nose_held := false
+var _nose_target := Vector3.ZERO
+var _nose_pull := Vector3.ZERO
+var _nose_velocity := Vector3.ZERO
+var _nose_brace := Vector3.ZERO
+var _nose_tension := 0.0
+var _nose_flinch := 0.0
+var _nose_time := 0.0
 
 
 func _ready() -> void:
+	process_priority = -1
 	_model = $Model
 	var material := BEAVER_MATERIAL
 	var sole_offset := 0.156
@@ -149,6 +165,7 @@ func _process(delta: float) -> void:
 	var look := (global_basis.inverse() * (target - eyes_center)).normalized()
 	var turn := Vector2(look.x, look.y).limit_length(1.0) if look.z > 0.0 else Vector2.ZERO
 	_cursor_head_turn = _cursor_head_turn.lerp(turn, 1.0 - exp(-delta * 4.5))
+	_update_nose_reaction(delta)
 	if not _busy:
 		_rest()
 	_animate_face(delta, target)
@@ -198,7 +215,7 @@ func _cursor_target(camera: Camera3D, eyes_center: Vector3) -> Vector3:
 
 func _animate_face(delta: float, target: Vector3) -> void:
 	_animate_eyes(delta, target)
-	var opening: float = _voice.mouth_opening()
+	var opening := maxf(_voice.mouth_opening(), _nose_flinch * 0.36 + _nose_tension * 0.10)
 	var speed := 32.0 if opening > _mouth else 21.0
 	var mouth := lerpf(_mouth, opening, 1.0 - exp(-delta * speed))
 	if mouth < 0.001:
@@ -228,7 +245,57 @@ func _animate_eyes(delta: float, target: Vector3) -> void:
 		var local_gaze := neutral + socket.inverse() * gaze_shift
 		var material := eye.material_override as ShaderMaterial
 		material.set_shader_parameter("gaze", local_gaze.normalized())
-		material.set_shader_parameter("blink", closure)
+		material.set_shader_parameter("blink", maxf(closure, _nose_flinch * 0.76 + _nose_tension * 0.19))
+
+
+func nose_transform() -> Transform3D:
+	var head := _rig.global_transform * _rig.get_bone_global_pose(_head)
+	return Transform3D(head.basis.orthonormalized(), head * NOSE_POINTS[opponent])
+
+
+func grab_nose() -> void:
+	_nose_held = true
+	_nose_time = 0.0
+	_nose_flinch = 1.0
+	_nose_velocity += Vector3(0.0, 0.40, -0.76)
+	pull_nose(Vector3.ZERO)
+
+
+func pull_nose(offset: Vector3) -> void:
+	var drag := global_basis.inverse() * offset
+	_nose_target = Vector3(drag.x, drag.y * 0.82, drag.z * 0.65).limit_length(NOSE_PULL_LIMIT)
+	_nose_target.z += 0.075 + _nose_target.length() * 0.24
+
+
+func release_nose() -> void:
+	_nose_held = false
+	_nose_target = Vector3.ZERO
+
+
+func _update_nose_reaction(delta: float) -> void:
+	var tension := smoothstep(0.04, 0.50, _nose_target.length())
+	if not _nose_held and _nose_pull.length_squared() + _nose_velocity.length_squared() +			+ _nose_brace.length_squared() + _nose_tension + _nose_flinch < 0.0001:
+		_nose_pull = Vector3.ZERO
+		_nose_velocity = Vector3.ZERO
+		_nose_brace = Vector3.ZERO
+		_nose_tension = 0.0
+		_nose_flinch = 0.0
+		return
+	_nose_time += delta
+	var resistance := Vector3(sin(_nose_time * 12.5), sin(_nose_time * 8.6 + 1.0) * 0.46,
+		-cos(_nose_time * 11.1) * 0.52) * tension * 0.065
+	var goal := _nose_target + resistance
+	var time := minf(delta, 0.08)
+	var steps := maxi(1, ceili(time * 120.0))
+	var step := time / steps
+	for _i in steps:
+		_nose_velocity += ((goal - _nose_pull) * 174.0 - _nose_velocity * 13.5) * step
+		_nose_pull += _nose_velocity * step
+	_nose_brace = _nose_brace.lerp(_nose_pull, 1.0 - exp(-delta * 7.4))
+	_nose_tension = lerpf(_nose_tension, maxf(tension, 0.32 if _nose_held else 0.0),
+		1.0 - exp(-delta * 10.0))
+	var strain := smoothstep(1.2, 4.2, _nose_velocity.length()) * 0.65
+	_nose_flinch = maxf(strain, _nose_flinch * exp(-delta * 9.0))
 
 
 func shot_setup(checker: Vector3, direction: Vector3) -> ShotSetup:
@@ -466,8 +533,11 @@ func _stance_position(stance: Vector3) -> Vector3:
 func _rest() -> void:
 	var sway := sin(_clock * 0.74)
 	var breath := sin(_clock * 2.35)
-	_shift_hips(Vector3(0.036 * sway, -0.047 + 0.010 * breath, 0.017 * sway))
+	_shift_hips(Vector3(0.036 * sway, -0.047 + 0.010 * breath, 0.017 * sway)
+		+ Vector3(_nose_brace.x * 0.17, -_nose_tension * 0.054, -_nose_brace.z * 0.24))
 	_rest_body()
+	if _nose_tension > 0.005:
+		_pose_bracing_paws()
 	for index in range(2):
 		_pose_foot(index, _foot_rest[index])
 
@@ -489,25 +559,51 @@ func _pose_foot(index: int, target: Transform3D) -> void:
 	_set_rig_basis(leg[Joint.END], target.basis)
 
 
+func _pose_bracing_paws() -> void:
+	var nose := to_local(nose_transform().origin)
+	for index in _arms.size():
+		var side := _side_sign(index)
+		var lead := clampf(_nose_brace.x * side, -0.25, 0.25)
+		var weight := clampf(_nose_tension * (0.70 + lead), 0.0, 1.0)
+		var brace := Vector3(nose.x * 0.31 + side * (1.24 - lead * 0.55),
+			nose.y - 1.17 + lead * 0.45, nose.z - 0.34)
+		var facing := (nose - brace + Vector3.UP * 0.25).normalized()
+		_pose_arm(index, _hip_wrist(index).lerp(brace, weight),
+			_hip_facing(index).lerp(facing, weight).normalized(), weight * 0.28, 1.0 - weight)
+
+
 func _focus(weight: float) -> void:
 	_focus_weight = weight
 	var spine_parent := _rig.get_bone_parent(_spine)
 	var spine_offset := _rig.get_bone_global_pose(spine_parent).basis.inverse() * _lunge * weight
 	_rig.set_bone_pose_position(_spine, _rig.get_bone_rest(_spine).origin + spine_offset)
-	var lean := lerpf(0.035 + 0.015 * sin(_clock * 2.7), lerpf(0.20, 0.615, _reach), weight)
-	var roll := _side_sign(_strike_arm) * weight * 0.075
-	var twist := -_side_sign(_strike_arm) * _reach * weight * 0.22
+	var reaction := 1.0 - weight if not _busy else 0.0
+	var lean := lerpf(0.035 + 0.015 * sin(_clock * 2.7), lerpf(0.20, 0.615, _reach), weight) \
+		+ _nose_brace.z * 0.23 * reaction
+	var roll := _side_sign(_strike_arm) * weight * 0.075 - _nose_brace.x * 0.14 * reaction
+	var twist := -_side_sign(_strike_arm) * _reach * weight * 0.22 + _nose_brace.x * 0.10 * reaction
 	_rotate_from_rest(_spine, Vector3(lean, _look_yaw * weight * 0.14 + twist, roll))
-	var glance := _cursor_head_turn * (1.0 - weight)
+	var glance := _cursor_head_turn * (1.0 - weight) * (1.0 - _nose_tension * 0.85)
+	var recoil := _nose_velocity * reaction
+	_set_head_offset(Vector3(_nose_pull.x * 0.30, _nose_pull.y * 0.40, _nose_pull.z * 0.60) * reaction)
 	_rotate_from_rest(_head, Vector3(-lean * 1.35 - glance.y * 0.09,
 		_look_yaw * weight + glance.x * 0.16 + 0.027 * sin(_clock),
-		-roll + 0.018 * sin(_clock * 1.5)))
+		-roll + 0.018 * sin(_clock * 1.5)) + Vector3(
+			-_nose_pull.y * 0.46 - recoil.y * 0.018,
+			_nose_pull.x * 0.34 + recoil.x * 0.023,
+			-_nose_pull.x * 0.25 - recoil.x * 0.019) * reaction)
 	var resting_arm := 1 - _strike_arm
 	var release := clampf(weight * 1.8, 0.0, 1.0)
 	var counterbalance := Vector3(_side_sign(resting_arm) * 0.09, 0.11, -0.19) * weight
 	var wrist := _hip_wrist(resting_arm).lerp(_walking_wrist(resting_arm) + counterbalance, release)
 	var facing := _hip_facing(resting_arm).lerp(IDLE_PAW_DIRECTION, release).normalized()
 	_pose_arm(resting_arm, wrist, facing, 0.0, 1.0 - release)
+
+
+func _set_head_offset(offset: Vector3) -> void:
+	var parent := _rig.get_bone_global_pose(_rig.get_bone_parent(_head))
+	var rest := _rig.get_bone_rest(_head).origin
+	_rig.set_bone_pose_position(_head, rest + parent.basis.inverse() * offset / _model.scale.x)
 
 
 # Waist targets follow the torso as the beaver breathes, leans, and takes a step.

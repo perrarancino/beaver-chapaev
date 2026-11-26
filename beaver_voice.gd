@@ -21,6 +21,18 @@ const VOICES := [
 				"00000345879974559998510010000000000000079764389961245589834448995344336864674000000037984311889999667877753557985223233377544359953365875310000000000000",
 			],
 		],
+		&"nose": [
+			[
+				"Мя! Отпусти нос!",
+				preload("res://assets/beaver/voice/neco/nose_1.ogg"),
+				"069999998652100000000000004830001896430013788998877752211110000000",
+			],
+			[
+				"Ай! Нос не дёргай!",
+				preload("res://assets/beaver/voice/neco/nose_2.ogg"),
+				"0478998865310000000000000059898743311899865458999665214655420000000",
+			],
+		],
 		&"aim": [
 			[
 				"Мяу! Щас будет пиздец!",
@@ -100,6 +112,18 @@ const VOICES := [
 				INTRO_LINE,
 				preload("res://assets/beaver/voice/geralt/intro_1.ogg"),
 				"00001346667754457663102110000000000015754323785334546665556456543333345433321010000000004689854338999999989999864567777645445543443222257544555544211110000000000",
+			],
+		],
+		&"nose": [
+			[
+				"Руки прочь от носа.",
+				preload("res://assets/beaver/voice/geralt/nose_1.ogg"),
+				"355799841125973003789998234458720014565543222222432110000000",
+			],
+			[
+				"Ай. Пусти, сука.",
+				preload("res://assets/beaver/voice/geralt/nose_2.ogg"),
+				"17999989874320000000002698656531035468853433443486421113432110000000",
 			],
 		],
 		&"aim": [
@@ -183,6 +207,18 @@ const VOICES := [
 				"0000026999755688668998655899974211000000000000026887899877888876678877887644489985432224532100000000000000258999854499645898765432227764346886545874358999878543321243210000000000000000",
 			],
 		],
+		&"nose": [
+			[
+				"Ай! За нос не хватать!",
+				preload("res://assets/beaver/voice/chef/nose_1.ogg"),
+				"0468998532100000000000000169755774212333116999311685211100000000",
+			],
+			[
+				"Нос шефа не трогать!",
+				preload("res://assets/beaver/voice/chef/nose_2.ogg"),
+				"037994326752168653564227899535521100000000",
+			],
+		],
 		&"aim": [
 			[
 				"Так, щепотку соли… и щёлк!",
@@ -263,6 +299,7 @@ var _opponent := 0
 var _line_offsets: Dictionary[int, Dictionary] = {}
 var _reactions: Array[StringName] = []
 var _envelope := ""
+var _next_nose_line := 0
 
 
 func _ready() -> void:
@@ -292,6 +329,14 @@ func react_to_knockout(own_piece: bool) -> void:
 		_play_line(cue)
 	elif cue not in _reactions:
 		_reactions.append(cue)
+
+
+func react_to_nose_pull() -> void:
+	var now := Time.get_ticks_msec()
+	if playing or now < _next_nose_line:
+		return
+	_next_nose_line = now + 2300
+	_play_line(&"nose")
 
 
 func _play_line(cue: StringName) -> void:
