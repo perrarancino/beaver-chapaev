@@ -17,6 +17,8 @@ const RUBBER_BOUNCE := 0.74
 const ARMORED_MASS := 2.5
 const SURFACE_SHADER := preload("res://assets/FX/checker_surface.gdshader")
 const SURFACE_RIM_SHADER := preload("res://assets/FX/checker_surface_rim.gdshader")
+const TELEPORT_DROP_TIME := 0.36
+const TELEPORT_DROP_HEIGHT := 0.57
 const GHOST_SHADER := preload("res://assets/FX/checker_ghost.gdshader")
 const WIND_SHADER := preload("res://assets/FX/checker_wind.gdshader")
 const ARC_ATLAS := preload("res://assets/FX/checker_strike_atlas.svg")
@@ -129,7 +131,8 @@ var glued := false:
 			if stretch_tween and stretch_tween.is_running():
 				stretch_tween.kill()
 			stretch_amount = 0.0
-			visual.basis = Basis.IDENTITY
+			_impact_basis = Basis.IDENTITY
+			_update_visual_pose()
 var float_used := false
 var wind_effect: MeshInstance3D
 var wind_lift := 0.0
@@ -146,6 +149,20 @@ var hovering := false:
 			wind_transition.tween_method(_set_wind_lift, wind_lift, float(hovering), 0.20)
 var hover_started_turn := -1
 var rail_boost_used := false
+var zone_hits := 0
+var zone_speed_pending := false
+var zone_power := 1.0
+var size_scale := 1.0
+var _visual_size := 1.0
+var _resize_tween: Tween
+var _teleport_drop_age := -1.0
+var _teleport_ground_y := 0.0
+var _teleport_angles := Vector3.ZERO
+var _teleport_squash := 0.0
+var _teleport_rebound := 0.0
+var _teleport_settle: Tween
+var _teleport_collision_layer := 0
+var _teleport_collision_mask := 0
 var fall_velocity := Vector3.ZERO
 var _fall_spin := 0.0
 var _sliding_on_table := false
@@ -154,29 +171,32 @@ var _fall_settled := false
 var _knockout_time := 0.0
 var stretch_tween: Tween
 var stretch_amount := 0.0
+var _impact_basis := Basis.IDENTITY
 @onready var planar_body: RigidBody2D = $PlanarBody
+@onready var planar_shape: CollisionShape2D = $PlanarBody/CollisionShape2D
 @onready var contact_material: PhysicsMaterial = planar_body.physics_material_override
 @onready var turn_aura := get_node_or_null("TurnAura") as MeshInstance3D
 @onready var visual: Node3D = $Visual
 var mass: float:
 	get: return planar_body.mass
+var radius: float:
+	get: return RADIUS * size_scale
+var teleport_dropping: bool:
+	get: return _teleport_drop_age >= 0.0
+var half_height: float:
+	get: return HALF_HEIGHT * size_scale
 var linear_velocity: Vector3:
 	get: return _board_basis() * from_plane(planar_body.linear_velocity)
 
 
 func _ready() -> void:
+	planar_shape.shape = planar_shape.shape.duplicate()
 	place_on_board(position, rotation.y)
 	planar_body.body_entered.connect(_report_contact)
 	if is_intangible():
 		planar_body.collision_layer = 0
 		planar_body.collision_mask = 0
-	planar_body.mass = ARMORED_MASS if icon == Icon.ARMORED else 1.0
-	planar_body.linear_damp = 0.04 if icon == Icon.SNOWFLAKE else NORMAL_DAMP
-	contact_material.friction = ICE_FRICTION if icon == Icon.SNOWFLAKE else NORMAL_FRICTION
-	match icon:
-		Icon.RUBBER: contact_material.bounce = RUBBER_BOUNCE
-		Icon.ARMORED: contact_material.bounce = 0.0
-		_: contact_material.bounce = NORMAL_BOUNCE
+	_refresh_contact_properties()
 	if icon == Icon.SNOWFLAKE or icon == Icon.EXPLOSIVE or icon == Icon.LIGHTNING:
 		_coat_surface()
 		_add_surface_rim()
@@ -214,11 +234,43 @@ func _board_basis() -> Basis:
 	return board.global_basis if board else Basis.IDENTITY
 
 
+func set_zone_power(multiplier: float) -> void:
+	if zone_power == multiplier:
+		return
+	zone_power = multiplier
+	_refresh_contact_properties()
+
+
+func _refresh_contact_properties() -> void:
+	planar_body.mass = ARMORED_MASS * zone_power if icon == Icon.ARMORED else 1.0
+	planar_body.linear_damp = 0.04 / zone_power if icon == Icon.SNOWFLAKE else NORMAL_DAMP
+	contact_material.friction = ICE_FRICTION / zone_power if icon == Icon.SNOWFLAKE else NORMAL_FRICTION
+	match icon:
+		Icon.RUBBER: contact_material.bounce = minf(0.96, RUBBER_BOUNCE * zone_power)
+		Icon.ARMORED: contact_material.bounce = 0.0
+		_: contact_material.bounce = NORMAL_BOUNCE
+
+
+func resize_in_zone(multiplier: float) -> void:
+	if size_scale == multiplier:
+		return
+	position.y += HALF_HEIGHT * (multiplier - size_scale)
+	size_scale = multiplier
+	(planar_shape.shape as CircleShape2D).radius = radius * PIXELS_PER_UNIT
+	if _resize_tween and _resize_tween.is_running():
+		_resize_tween.kill()
+	_update_visual_pose()
+	_resize_tween = create_tween().set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	_resize_tween.tween_method(func(value: float) -> void:
+		_visual_size = value
+		_update_visual_pose(), _visual_size, multiplier, 0.18)
+
+
 func apply_slide_friction(delta: float, stopping_distance := INF) -> void:
 	if planar_body.sleeping:
 		return
-	var friction := ICE_FRICTION if icon == Icon.SNOWFLAKE else NORMAL_FRICTION
-	var braking := maxf(friction * SLIDE_GRAVITY, linear_velocity.length_squared() / (2.0 * stopping_distance))
+	var braking := maxf(contact_material.friction * SLIDE_GRAVITY,
+		linear_velocity.length_squared() / (2.0 * stopping_distance))
 	planar_body.linear_velocity = planar_body.linear_velocity.move_toward(
 		Vector2.ZERO, braking * PIXELS_PER_UNIT * delta)
 
@@ -236,6 +288,57 @@ func stop_motion() -> void:
 	planar_body.linear_velocity = Vector2.ZERO
 	planar_body.angular_velocity = 0.0
 	planar_body.sleeping = true
+
+
+func begin_teleport_drop() -> void:
+	stop_motion()
+	incoming_velocity = Vector3.ZERO
+	planar_body.freeze = true
+	_teleport_collision_layer = planar_body.collision_layer
+	_teleport_collision_mask = planar_body.collision_mask
+	planar_body.collision_layer = 0
+	planar_body.collision_mask = 0
+	_teleport_ground_y = position.y
+	_teleport_drop_age = 0.0
+	position.y += TELEPORT_DROP_HEIGHT
+	if stretch_tween and stretch_tween.is_running():
+		stretch_tween.kill()
+	if _teleport_settle and _teleport_settle.is_running():
+		_teleport_settle.kill()
+	stretch_amount = 0.0
+	_impact_basis = Basis.IDENTITY
+	_teleport_squash = 0.0
+	_teleport_rebound = 0.0
+	_teleport_angles = Vector3(0.26, -0.38, -0.19)
+	_update_visual_pose()
+	reset_physics_interpolation()
+
+
+func advance_teleport_drop(delta: float) -> bool:
+	_teleport_drop_age += delta
+	var progress := clampf(_teleport_drop_age / TELEPORT_DROP_TIME, 0.0, 1.0)
+	position.y = _teleport_ground_y + TELEPORT_DROP_HEIGHT * (1.0 - progress * progress)
+	_teleport_angles = Vector3(0.26, -0.38, -0.19) * (1.0 - progress)
+	_update_visual_pose()
+	return progress >= 1.0
+
+
+func finish_teleport_drop() -> void:
+	_teleport_drop_age = -1.0
+	planar_body.freeze = false
+	planar_body.collision_layer = _teleport_collision_layer
+	planar_body.collision_mask = _teleport_collision_mask
+	stop_motion()
+	_set_teleport_settle(0.0)
+	_teleport_settle = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
+	_teleport_settle.tween_method(_set_teleport_settle, 0.0, 1.0, 0.23)
+
+
+func _set_teleport_settle(progress: float) -> void:
+	_teleport_squash = 0.23 * (1.0 - smoothstep(0.0, 0.34, progress))
+	_teleport_rebound = 0.042 * sin(PI * smoothstep(0.20, 0.94, progress))
+	_teleport_angles = Vector3(-0.13, 0.0, 0.095) * sin(progress * TAU) * (1.0 - progress)
+	_update_visual_pose()
 
 
 func show_turn_aura(active: bool) -> void:
@@ -274,7 +377,18 @@ func _apply_impact_stretch(amount: float, board_axis: Vector3) -> void:
 	var axis := basis.inverse() * board_axis
 	var alignment := Basis(Vector3.UP, atan2(-axis.z, axis.x))
 	var scale_along_impact := Basis.from_scale(Vector3(1.0 + amount, 1.0 - amount * 0.32, 1.0 - amount * 0.71))
-	visual.basis = alignment * scale_along_impact * alignment.transposed()
+	_impact_basis = alignment * scale_along_impact * alignment.transposed()
+	_update_visual_pose()
+
+
+func _update_visual_pose() -> void:
+	var squash := Vector3(1.0 + _teleport_squash * 0.23, 1.0 - _teleport_squash, 1.0 + _teleport_squash * 0.23)
+	visual.basis = (Basis.from_euler(_teleport_angles) * _impact_basis).scaled(squash * _visual_size)
+	var base_shift := HALF_HEIGHT * (_visual_size * squash.y - size_scale) + _teleport_rebound
+	visual.position.y = base_shift
+	if turn_aura:
+		turn_aura.scale = Vector3.ONE * _visual_size
+		turn_aura.position.y = -0.052 * _visual_size + base_shift
 
 
 func _coat_surface() -> void:
@@ -429,7 +543,7 @@ func start_fuse() -> void:
 
 
 func is_intangible() -> bool:
-	return icon == Icon.GHOST and not ghost_spent
+	return teleport_dropping or (icon == Icon.GHOST and not ghost_spent)
 
 
 func spend_ghost() -> void:
@@ -450,8 +564,8 @@ func is_in_motion() -> bool:
 
 func shot_multiplier() -> float:
 	match icon:
-		Icon.SNOWFLAKE: return 1.15
-		Icon.ARMORED: return 1.50
+		Icon.SNOWFLAKE: return 1.0 + 0.15 * zone_power
+		Icon.ARMORED: return 1.0 + 0.50 * zone_power
 		_: return 1.0
 
 
@@ -480,8 +594,8 @@ func animate_fall(delta: float, table_y: float, table_radius: float, floor_y: fl
 func _advance_fall(delta: float, table_y: float, table_radius: float, floor_y: float, room: Rect2) -> void:
 
 	var start := global_position
-	var tabletop := table_y + HALF_HEIGHT
-	var floor := floor_y + HALF_HEIGHT
+	var tabletop := table_y + half_height
+	var floor := floor_y + half_height
 	var radius_squared := table_radius * table_radius
 	if not _sliding_on_table:
 		fall_velocity.y -= SLIDE_GRAVITY * delta
@@ -500,8 +614,8 @@ func _advance_fall(delta: float, table_y: float, table_radius: float, floor_y: f
 			fall_velocity = fall_velocity.slide(Vector3.UP) * 0.84
 			_fall_spin *= 0.62
 			point = contact
-	var wall_x := clampf(point.x, room.position.x + RADIUS, room.end.x - RADIUS)
-	var wall_z := clampf(point.z, room.position.y + RADIUS, room.end.y - RADIUS)
+	var wall_x := clampf(point.x, room.position.x + radius, room.end.x - radius)
+	var wall_z := clampf(point.z, room.position.y + radius, room.end.y - radius)
 	if wall_x != point.x:
 		point.x = wall_x
 		fall_velocity.x *= -0.25

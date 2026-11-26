@@ -339,7 +339,7 @@ func wait_for_stance() -> void:
 		await returned_to_stance
 
 
-func wind_up(checker: Vector3, direction: Vector3, setup: ShotSetup = null) -> bool:
+func wind_up(checker: Vector3, direction: Vector3, setup: ShotSetup = null, size := 1.0) -> bool:
 	await wait_for_stance()
 	if setup == null:
 		setup = shot_setup(checker, direction)
@@ -355,7 +355,7 @@ func wind_up(checker: Vector3, direction: Vector3, setup: ShotSetup = null) -> b
 	_lunge = Vector3(_side_sign(_strike_arm) * -0.09, 0.33, 0.49) * _reach / _model.scale.x
 	_look_yaw = clampf(atan2(local_target.x, local_target.z), -0.56, 0.56)
 	var facing := _strike_facing(direction)
-	var contact := to_local(_contact_point(checker, direction))
+	var contact := to_local(_contact_point(checker, direction, size))
 	var ready_tip := contact - forward * 0.47 + Vector3.UP * 0.31
 	var start_tip := _tip_position(_strike_arm)
 	var lift := _physics_tween()
@@ -370,8 +370,8 @@ func wind_up(checker: Vector3, direction: Vector3, setup: ShotSetup = null) -> b
 	return true
 
 
-func strike(checker: Vector3, direction: Vector3) -> bool:
-	var contact := to_local(_contact_point(checker, direction))
+func strike(checker: Vector3, direction: Vector3, size := 1.0) -> bool:
+	var contact := to_local(_contact_point(checker, direction, size))
 	var forward := global_basis.inverse() * direction
 	_shot_facing = _strike_facing(direction)
 	var approach: Array[Vector3] = []
@@ -722,8 +722,8 @@ func _strike_facing(direction: Vector3) -> Vector3:
 	return (global_basis.inverse() * direction + Vector3.DOWN * 0.26).normalized()
 
 
-func _contact_point(checker: Vector3, direction: Vector3) -> Vector3:
-	return checker + Vector3.UP * 0.035 - direction * Checker.RADIUS
+func _contact_point(checker: Vector3, direction: Vector3, size := 1.0) -> Vector3:
+	return checker + (Vector3.UP * 0.035 - direction * Checker.RADIUS) * size
 
 
 func _finger_offset(index: int, facing: Vector3) -> Vector3:

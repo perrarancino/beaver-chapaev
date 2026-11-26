@@ -63,10 +63,10 @@ static func ray_exit_distance(origin: Vector2, direction: Vector2, radius: float
 	return maxf((-projection + sqrt(discriminant)) / direction_squared, 0.0)
 
 
-func overlaps_disc(point: Vector3) -> bool:
+func overlaps_disc(point: Vector3, disc_radius := Checker.RADIUS) -> bool:
 	var position := Vector2(point.x, point.z)
 	var radius := position.length()
-	if radius < CONTACT_RADIUS or radius > OUTER_RADIUS + Checker.RADIUS:
+	if radius < INNER_RADIUS - disc_radius or radius > OUTER_RADIUS + disc_radius:
 		return false
 	var angle := position.angle()
 	var side := posmod(roundi(angle / SLOT_ANGLE), SLOT_COUNT)
@@ -74,20 +74,21 @@ func overlaps_disc(point: Vector3) -> bool:
 		return true
 	for cap in _caps:
 		var nearest := cap.radial * clampf(position.dot(cap.radial), INNER_RADIUS, OUTER_RADIUS)
-		if position.distance_squared_to(nearest) < Checker.RADIUS * Checker.RADIUS:
+		if position.distance_squared_to(nearest) < disc_radius * disc_radius:
 			return true
 	return false
 
 
-func trace(from: Vector3, direction: Vector3, travel: float) -> Contact:
+func trace(from: Vector3, direction: Vector3, travel: float, disc_radius := Checker.RADIUS) -> Contact:
 	var origin := Vector2(from.x, from.z)
 	var origin_radius := origin.length()
-	if travel <= 0.00001 or origin_radius + travel < CONTACT_RADIUS or rail_slots.is_empty():
+	var contact_radius := INNER_RADIUS - disc_radius
+	if travel <= 0.00001 or origin_radius + travel < contact_radius or rail_slots.is_empty():
 		return null
 	var heading := Vector2(direction.x, direction.z).normalized()
 	var closest := travel
 	var contact: Contact
-	var distance := ray_exit_distance(origin, heading, CONTACT_RADIUS)
+	var distance := ray_exit_distance(origin, heading, contact_radius)
 	if distance <= closest and origin_radius <= INNER_RADIUS + 0.01:
 		var normal := (origin + heading * distance).normalized()
 		var angle := normal.angle()
@@ -97,14 +98,14 @@ func trace(from: Vector3, direction: Vector3, travel: float) -> Contact:
 			contact = Contact.new(distance, normal)
 			closest = distance
 	for cap in _caps:
-		var cap_contact := _trace_cap(cap, origin, heading, closest)
+		var cap_contact := _trace_cap(cap, origin, heading, closest, disc_radius)
 		if cap_contact != null:
 			contact = cap_contact
 			closest = cap_contact.distance
 	return contact
 
 
-func _trace_cap(cap: Cap, origin: Vector2, heading: Vector2, limit: float) -> Contact:
+func _trace_cap(cap: Cap, origin: Vector2, heading: Vector2, limit: float, disc_radius: float) -> Contact:
 	# The disc can also clip the open end of a rail. Sweep against its flat cap
 	# and the rounded clearance around both corners.
 	if origin.dot(cap.inward) > 0.002:
@@ -112,7 +113,7 @@ func _trace_cap(cap: Cap, origin: Vector2, heading: Vector2, limit: float) -> Co
 	var contact: Contact
 	var speed := heading.dot(cap.inward)
 	if speed > 0.0001:
-		var distance := maxf((-Checker.RADIUS - origin.dot(cap.inward)) / speed, 0.0)
+		var distance := maxf((-disc_radius - origin.dot(cap.inward)) / speed, 0.0)
 		var radial_distance := (origin + heading * distance).dot(cap.radial)
 		if distance <= limit and radial_distance >= INNER_RADIUS and radial_distance <= OUTER_RADIUS:
 			limit = distance
@@ -121,7 +122,7 @@ func _trace_cap(cap: Cap, origin: Vector2, heading: Vector2, limit: float) -> Co
 		var corner := cap.radial * radius
 		var offset := origin - corner
 		var approach := offset.dot(heading)
-		var discriminant := approach * approach + Checker.RADIUS * Checker.RADIUS - offset.length_squared()
+		var discriminant := approach * approach + disc_radius * disc_radius - offset.length_squared()
 		if approach >= 0.0 or discriminant < 0.0:
 			continue
 		var distance := maxf(-approach - sqrt(discriminant), 0.0)
