@@ -11,11 +11,11 @@ const CheckerStrikeEffects := preload("res://assets/FX/checker_strike_effects.gd
 const CheckerTrails := preload("res://assets/FX/checker_trails.gd")
 const CheckerBlast := preload("res://assets/FX/checker_blast.gd")
 const STICKY_SLIME_SHADER := preload("res://assets/FX/checker_sticky_slime.gdshader")
-const MUSIC_TRACKS: Array[AudioStream] = [
-	preload("res://assets/music/khitryi_umysel.mp3"),
-	preload("res://assets/music/balalaechnyi_manevr.mp3"),
-	preload("res://assets/music/nochnoi_tropar.mp3"),
-	preload("res://assets/music/tainaya_zasada.mp3"),
+const MUSIC_TRACKS: Array[String] = [
+	"res://assets/music/khitryi_umysel.mp3",
+	"res://assets/music/balalaechnyi_manevr.mp3",
+	"res://assets/music/nochnoi_tropar.mp3",
+	"res://assets/music/tainaya_zasada.mp3",
 ]
 const TABLE_TOP := 0.003
 const BOARD_TOP := TABLE_TOP
@@ -100,7 +100,15 @@ var blast_effects := Node3D.new()
 var sticky_slime_mesh := PlaneMesh.new()
 var rng := RandomNumberGenerator.new()
 var orbiting := false
-var music_queue: Array[AudioStream] = []
+var music_queue: Array[String] = []
+var last_music_path := ""
+var next_music: AudioStream
+var music_response_callback: JavaScriptObject
+var music_loaded_callback: JavaScriptObject
+var music_failed_callback: JavaScriptObject
+var music_loading := false
+var music_started := false
+var music_failures := 0
 @onready var background_music: AudioStreamPlayer = $BackgroundMusic
 @onready var checker_strike_sound: AudioStreamPlayer = $CheckerSounds/Strike
 @onready var checker_hit_sound: AudioStreamPlayer = $CheckerSounds/Hit
@@ -153,6 +161,8 @@ func _ready() -> void:
 			enemy_setup.append(piece.icon)
 		piece.queue_free()
 	_play_intro.call_deferred()
+	if OS.has_feature("web") and not ResourceLoader.exists(MUSIC_TRACKS[0]):
+		_prepare_next_music_track.call_deferred()
 
 func _start_lamp_flicker() -> void:
 	var key_light: SpotLight3D = $KeyLight
@@ -400,18 +410,76 @@ func _set_master_volume(percent: float) -> void:
 	AudioServer.set_bus_mute(0, is_zero_approx(percent))
 
 func _start_background_music() -> void:
-	if background_music.stream == null:
-		_play_next_music_track()
+	music_started = true
+	_play_next_music_track()
 
 func _play_next_music_track() -> void:
+	if next_music == null:
+		_prepare_next_music_track()
+		return
+	background_music.stream = next_music
+	next_music = null
+	background_music.play()
+	if OS.has_feature("web"):
+		_prepare_next_music_track.call_deferred()
+
+
+func _prepare_next_music_track() -> void:
+	if next_music or music_loading or music_failures >= MUSIC_TRACKS.size():
+		return
 	if music_queue.is_empty():
 		music_queue.assign(MUSIC_TRACKS)
 		music_queue.shuffle()
 		# The first track drawn after a reshuffle must differ from the last one played.
-		if music_queue.back() == background_music.stream:
+		if music_queue.back() == last_music_path:
 			music_queue.push_front(music_queue.pop_back())
-	background_music.stream = music_queue.pop_back()
-	background_music.play()
+	last_music_path = music_queue.pop_back()
+	if ResourceLoader.exists(last_music_path):
+		_music_track_ready(load(last_music_path) as AudioStream)
+		return
+	if not OS.has_feature("web"):
+		_music_track_ready(null)
+		return
+	if music_response_callback == null:
+		music_response_callback = JavaScriptBridge.create_callback(_on_music_response)
+		music_loaded_callback = JavaScriptBridge.create_callback(_on_music_downloaded)
+		music_failed_callback = JavaScriptBridge.create_callback(_on_music_failed)
+	music_loading = true
+	var window := JavaScriptBridge.get_interface("window")
+	# Read the whole response in the browser without waiting for a game frame per network chunk.
+	var request: JavaScriptObject = window.fetch(last_music_path.trim_prefix("res://"))
+	request.then(music_response_callback, music_failed_callback)
+
+
+func _on_music_response(args: Array) -> void:
+	var response: JavaScriptObject = args[0]
+	if not response.ok:
+		_music_track_ready(null)
+		return
+	var body: JavaScriptObject = response.arrayBuffer()
+	body.then(music_loaded_callback, music_failed_callback)
+
+
+func _on_music_downloaded(args: Array) -> void:
+	var bytes := JavaScriptBridge.js_buffer_to_packed_byte_array(args[0])
+	_music_track_ready(AudioStreamMP3.load_from_buffer(bytes))
+
+
+func _on_music_failed(_args: Array) -> void:
+	_music_track_ready(null)
+
+
+func _music_track_ready(track: AudioStream) -> void:
+	music_loading = false
+	if track == null:
+		music_failures += 1
+		push_warning("Could not load soundtrack: " + last_music_path)
+		_prepare_next_music_track.call_deferred()
+		return
+	music_failures = 0
+	next_music = track
+	if music_started and not background_music.playing:
+		_play_next_music_track()
 
 func _play_intro() -> void:
 	if phase != "intro":

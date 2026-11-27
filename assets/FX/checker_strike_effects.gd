@@ -5,11 +5,14 @@ const IMPACT_AGE := preload("res://assets/FX/checker_impact_age.tres")
 const ATLAS := preload("res://assets/FX/checker_strike_atlas.svg")
 const SPRITE_SHADER := preload("res://assets/FX/checker_strike.gdshader")
 const MAX_SPRITES := 96
+const MAX_IDLE_BURSTS_PER_COUNT := 4
 
 const ELEMENT_SHADER := preload("res://assets/FX/checker_element_hit.gdshader")
 var element_planes := {}
 var fragment_meshes := {}
 var fragment_scale := Curve.new()
+var idle_bursts: Dictionary[int, Array] = {}
+var active_bursts: Array[CPUParticles3D] = []
 
 var material := ShaderMaterial.new()
 var expires := PackedFloat64Array()
@@ -49,9 +52,10 @@ func _ready() -> void:
 
 
 func clear() -> void:
-	for burst in get_children():
+	for burst in active_bursts:
 		burst.hide()
 		burst.queue_free()
+	active_bursts.clear()
 	active = 0
 	multimesh.visible_instance_count = 0
 
@@ -114,11 +118,12 @@ func impact(point: Vector3, direction: Vector3, intensity: float,
 	flash.color_ramp = IMPACT_AGE
 	flash.scale = Vector3.ONE * strength
 	var camera := get_viewport().get_camera_3d()
+	flash.quaternion = Quaternion.IDENTITY
 	if camera:
 		var toward_camera := origin.direction_to(to_local(camera.global_position))
 		flash.quaternion = Quaternion(Vector3.UP, toward_camera)
 	flash.rotate_object_local(Vector3.UP, randf_range(-PI, PI))
-	flash.emitting = true
+	_start_burst(flash)
 
 	var mesh: Mesh = fragment_meshes.get(icon, fragment_meshes[Checker.Icon.NONE])
 	# The fine layer travels a little farther through its longer lifetime.
@@ -127,19 +132,43 @@ func impact(point: Vector3, direction: Vector3, intensity: float,
 
 
 func _emitter(origin: Vector3, count: int, duration: float) -> CPUParticles3D:
-	var burst := CPUParticles3D.new()
-	burst.emitting = false
-	burst.one_shot = true
-	burst.amount = count
-	burst.explosiveness = 1.0
+	var available: Array = idle_bursts.get_or_add(count, [])
+	var burst: CPUParticles3D
+	if available.is_empty():
+		burst = CPUParticles3D.new()
+		burst.emitting = false
+		burst.one_shot = true
+		burst.amount = count
+		burst.explosiveness = 1.0
+		burst.gravity = Vector3.ZERO
+		burst.local_coords = true
+		burst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		burst.finished.connect(_recycle_burst.bind(burst))
+		add_child(burst)
+	else:
+		burst = available.pop_back()
 	burst.lifetime = duration
-	burst.gravity = Vector3.ZERO
-	burst.local_coords = true
 	burst.position = origin
-	burst.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	add_child(burst)
-	burst.finished.connect(burst.queue_free)
 	return burst
+
+
+func _start_burst(burst: CPUParticles3D) -> void:
+	active_bursts.append(burst)
+	burst.show()
+	burst.reset_physics_interpolation()
+	burst.restart()
+
+
+func _recycle_burst(burst: CPUParticles3D) -> void:
+	if burst.is_queued_for_deletion():
+		return
+	active_bursts.erase(burst)
+	burst.hide()
+	var available := idle_bursts[burst.amount]
+	if available.size() < MAX_IDLE_BURSTS_PER_COUNT:
+		available.append(burst)
+	else:
+		burst.queue_free()
 
 
 func _fragments(origin: Vector3, hit_direction: Vector3, mesh: Mesh, strength: float,
@@ -160,7 +189,7 @@ func _fragments(origin: Vector3, hit_direction: Vector3, mesh: Mesh, strength: f
 	burst.scale_amount_min = strength * size_factor * 0.78
 	burst.scale_amount_max = strength * size_factor * 1.25
 	burst.scale_amount_curve = fragment_scale
-	burst.emitting = true
+	_start_burst(burst)
 
 
 func lightning_arc(from: Vector3, to: Vector3) -> void:

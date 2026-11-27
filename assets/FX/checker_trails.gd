@@ -33,20 +33,27 @@ class Track:
 var histories: Dictionary[int, Track] = {}
 var ribbon_mesh := ArrayMesh.new()
 var ribbon_material := ShaderMaterial.new()
-var ribbon_indices := PackedInt32Array()
+var columns := CROSS_COORDS.size()
+var indices_per_row := (columns - 1) * 6
+var row_indices := PackedInt32Array()
+var vertices := PackedVector3Array()
+var colors := PackedColorArray()
+var uv := PackedVector2Array()
+var uv2 := PackedVector2Array()
+var canonical_indices := PackedInt32Array()
+var cached_index_rows := 0
 var clock := 0.0
 
 
 func _ready() -> void:
 	ribbon_material.shader = TRAIL_SHADER
 	ribbon_material.set_shader_parameter("trail_length", MAX_LENGTH)
-	var columns := CROSS_COORDS.size()
-	for row in MAX_SAMPLES:
-		for column in range(columns - 1):
-			var a := row * columns + column
-			var b := a + columns
-			ribbon_indices.append_array(PackedInt32Array([a, a + 1, b, b, a + 1, b + 1]))
+	for column in range(columns - 1):
+		var next_row := column + columns
+		row_indices.append_array(PackedInt32Array([column, column + 1, next_row,
+			next_row, column + 1, next_row + 1]))
 	mesh = ribbon_mesh
+	material_override = ribbon_material
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 
@@ -76,6 +83,8 @@ func update_trails(delta: float, pieces: Array[Checker], emit: bool) -> void:
 		return
 	var camera := get_viewport().get_camera_3d()
 	var camera_right := global_basis.inverse() * camera.global_basis.x if camera else Vector3.RIGHT
+	var ribbons: Array[Track] = []
+	var row_count := 0
 	for id: int in histories.keys():
 		var track := histories[id]
 		if clock - track.head.time >= LIFETIME:
@@ -86,7 +95,35 @@ func update_trails(delta: float, pieces: Array[Checker], emit: bool) -> void:
 			track.samples.pop_front()
 		if not camera or track.head.distance - track.samples[0].distance < 0.002:
 			continue
-		_draw_ribbon(track, camera_right)
+		ribbons.append(track)
+		row_count += track.samples.size() + int(_has_extra_head(track))
+	if ribbons.is_empty():
+		return
+	var vertex_count := row_count * columns
+	vertices.resize(vertex_count)
+	colors.resize(vertex_count)
+	uv.resize(vertex_count)
+	uv2.resize(vertex_count)
+	var indices := _indices_for_rows(row_count - 1)
+	var vertex_start := 0
+	var row_start := 0
+	for track in ribbons:
+		if row_start > 0:
+			# Collapse the triangles between separate ribbons so only each ribbon is drawn.
+			var seam := (row_start - 1) * indices_per_row
+			for j in indices_per_row:
+				indices[seam + j] = vertex_start
+		var rows := _write_ribbon(track, camera_right, vertex_start)
+		vertex_start += rows * columns
+		row_start += rows
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = vertices
+	arrays[Mesh.ARRAY_COLOR] = colors
+	arrays[Mesh.ARRAY_TEX_UV] = uv
+	arrays[Mesh.ARRAY_TEX_UV2] = uv2
+	arrays[Mesh.ARRAY_INDEX] = indices
+	ribbon_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 
 
 func _record(piece: Checker, speed: float) -> void:
@@ -122,9 +159,26 @@ func _record(piece: Checker, speed: float) -> void:
 	track.head = Sample.new(point, clock, distance, strength)
 
 
-func _draw_ribbon(track: Track, camera_right: Vector3) -> void:
+func _has_extra_head(track: Track) -> bool:
+	return track.head.distance - track.samples[-1].distance >= 0.001
+
+
+func _indices_for_rows(rows: int) -> PackedInt32Array:
+	var count := rows * indices_per_row
+	if cached_index_rows < rows:
+		canonical_indices.resize(count)
+		for row in range(cached_index_rows, rows):
+			var row_index := row * indices_per_row
+			var vertex := row * columns
+			for j in indices_per_row:
+				canonical_indices[row_index + j] = vertex + row_indices[j]
+		cached_index_rows = rows
+	return canonical_indices.slice(0, count)
+
+
+func _write_ribbon(track: Track, camera_right: Vector3, vertex_start: int) -> int:
 	var points: Array[Sample] = track.samples.duplicate()
-	if track.head.distance - points[-1].distance >= 0.001:
+	if _has_extra_head(track):
 		points.append(track.head)
 	else:
 		points[-1] = track.head
@@ -132,19 +186,13 @@ func _draw_ribbon(track: Track, camera_right: Vector3) -> void:
 	var taper := minf(TAPER_LENGTH, track.head.distance)
 	var offset := track.seed * 0.081
 	var centers := _smooth_centers(points)
-	var widths := _ribbon_widths(points, centers, taper)
+	var profiles := PackedFloat64Array()
+	profiles.resize(points.size())
+	for i in points.size():
+		profiles[i] = _profile(points[i], track.head.distance - points[i].distance, taper)
+	var widths := _ribbon_widths(points, centers, profiles)
 	var previous_side := Vector3.ZERO
-	var columns := CROSS_COORDS.size()
 	var white_profile := 1.0 if track.tint == Color.WHITE else 0.0
-	var size := points.size() * columns
-	var vertices := PackedVector3Array()
-	var colors := PackedColorArray()
-	var uv := PackedVector2Array()
-	var uv2 := PackedVector2Array()
-	vertices.resize(size)
-	colors.resize(size)
-	uv.resize(size)
-	uv2.resize(size)
 	for i in points.size():
 		var sample: Sample = points[i]
 		var center := centers[i]
@@ -162,27 +210,20 @@ func _draw_ribbon(track: Track, camera_right: Vector3) -> void:
 		previous_side = side
 
 		var lag := track.head.distance - sample.distance
-		var profile := _profile(sample, lag, taper)
+		var profile := profiles[i]
 		var width := widths[i]
 		var opacity := sample.strength * profile * (2.0 - profile)
 		var tint := Color(track.tint, opacity)
+		var row_start := vertex_start + i * columns
 		# Keep the luminous center on shared vertices so it stays aligned through bends.
 		for column in columns:
 			var across: float = CROSS_COORDS[column]
-			var vertex := i * columns + column
+			var vertex := row_start + column
 			vertices[vertex] = center + side * width * (across * 2.0 - 1.0)
 			colors[vertex] = tint
 			uv[vertex] = Vector2(across, sample.distance + offset)
 			uv2[vertex] = Vector2(white_profile, lag)
-	var arrays: Array = []
-	arrays.resize(Mesh.ARRAY_MAX)
-	arrays[Mesh.ARRAY_VERTEX] = vertices
-	arrays[Mesh.ARRAY_COLOR] = colors
-	arrays[Mesh.ARRAY_TEX_UV] = uv
-	arrays[Mesh.ARRAY_TEX_UV2] = uv2
-	arrays[Mesh.ARRAY_INDEX] = ribbon_indices.slice(0, last * (columns - 1) * 6)
-	ribbon_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
-	ribbon_mesh.surface_set_material(ribbon_mesh.get_surface_count() - 1, ribbon_material)
+	return points.size()
 
 
 func _smooth_centers(points: Array[Sample]) -> PackedVector3Array:
@@ -198,13 +239,12 @@ func _smooth_centers(points: Array[Sample]) -> PackedVector3Array:
 	return centers
 
 
-func _ribbon_widths(points: Array[Sample], centers: PackedVector3Array, taper: float) -> PackedFloat32Array:
+func _ribbon_widths(points: Array[Sample], centers: PackedVector3Array,
+		profiles: PackedFloat64Array) -> PackedFloat32Array:
 	var widths := PackedFloat32Array()
 	widths.resize(points.size())
-	var head_distance := points[-1].distance
 	for i in points.size():
-		var profile := _profile(points[i], head_distance - points[i].distance, taper)
-		var width := Checker.RADIUS * 1.88 * sqrt(profile)
+		var width := Checker.RADIUS * 1.88 * sqrt(profiles[i])
 		if i > 0 and i < points.size() - 1:
 			var incoming := centers[i] - centers[i - 1]
 			var outgoing := centers[i + 1] - centers[i]

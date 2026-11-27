@@ -3,11 +3,11 @@ extends Node3D
 
 signal returned_to_stance
 
-const BEAVER_MATERIAL := preload("res://assets/beaver/beaver_material.tres")
-const BLUE_BEAVER_MODEL := preload("res://assets/beaver/blue/beaver.glb")
-const BLUE_BEAVER_MATERIAL := preload("res://assets/beaver/blue/beaver_material.tres")
-const CHEF_BEAVER_MODEL := preload("res://assets/beaver/chef/beaver.glb")
-const CHEF_BEAVER_MATERIAL := preload("res://assets/beaver/chef/beaver_material.tres")
+const BEAVER_MATERIAL := "res://assets/beaver/beaver_material.tres"
+const BLUE_BEAVER_MODEL := "res://assets/beaver/blue/beaver.glb"
+const BLUE_BEAVER_MATERIAL := "res://assets/beaver/blue/beaver_material.tres"
+const CHEF_BEAVER_MODEL := "res://assets/beaver/chef/beaver.glb"
+const CHEF_BEAVER_MATERIAL := "res://assets/beaver/chef/beaver_material.tres"
 const EYE_SHADER := preload("res://assets/beaver/beaver_eye.gdshader")
 const IDLE_PAW_DIRECTION := Vector3(0, -0.985, 0.173)
 const SHOULDER_OFFSET := 1.31
@@ -87,25 +87,26 @@ var _nose_time := 0.0
 func _ready() -> void:
 	process_priority = -1
 	_model = $Model
-	var material := BEAVER_MATERIAL
+	var material_path := BEAVER_MATERIAL
 	var sole_offset := 0.156
 	if not Engine.is_editor_hint():
 		opponent = randi_range(0, Opponent.size() - 1) as Opponent
 		_voice.select_opponent(opponent)
 	match opponent:
 		Opponent.BLUE:
-			_replace_model(BLUE_BEAVER_MODEL)
-			material = BLUE_BEAVER_MATERIAL
+			_replace_model(load(BLUE_BEAVER_MODEL) as PackedScene)
+			material_path = BLUE_BEAVER_MATERIAL
 			sole_offset = 0.042
 		Opponent.CHEF:
-			_replace_model(CHEF_BEAVER_MODEL)
-			material = CHEF_BEAVER_MATERIAL
+			_replace_model(load(CHEF_BEAVER_MODEL) as PackedScene)
+			material_path = CHEF_BEAVER_MATERIAL
 			sole_offset = 0.174
 			position.z -= 0.14
 	# The shared rig has different sole heights on the three meshes.
 	_model.position.y += sole_offset
 	_rig = _model.get_node("Rig/Skeleton3D")
 	_body = _rig.get_node("Body")
+	var material := load(material_path) as ShaderMaterial
 	_face = material.duplicate() as ShaderMaterial
 	if OS.has_feature("web"):
 		_face.set_shader_parameter("normal_strength", 0.55)

@@ -3,11 +3,14 @@ extends Node3D
 const BLAST_SHADER := preload("res://assets/FX/checker_blast.gdshader")
 const LIFETIME := 0.94
 const PUFF_COUNT := 14
+# Matches the point at which the pressure-wave shader's opacity reaches zero.
+const WAVE_FADE_END := 0.53
 static var puff_mesh: MultiMesh
 static var wave_mesh: TorusMesh
 
 var puff_material := ShaderMaterial.new()
 var wave_material := ShaderMaterial.new()
+var wave: MeshInstance3D
 var age := 0.0
 
 
@@ -23,7 +26,7 @@ func _ready() -> void:
 
 	wave_material.shader = BLAST_SHADER
 	wave_material.set_shader_parameter("pressure_wave", true)
-	var wave := MeshInstance3D.new()
+	wave = MeshInstance3D.new()
 	wave.mesh = wave_mesh
 	wave.material_override = wave_material
 	wave.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -36,8 +39,13 @@ func _process(delta: float) -> void:
 	if age >= LIFETIME:
 		queue_free()
 		return
-	puff_material.set_shader_parameter("progress", age / LIFETIME)
-	wave_material.set_shader_parameter("progress", age / LIFETIME)
+	var progress := age / LIFETIME
+	puff_material.set_shader_parameter("progress", progress)
+	if wave.visible:
+		if progress >= WAVE_FADE_END:
+			wave.hide()
+		else:
+			wave_material.set_shader_parameter("progress", progress)
 
 
 func _build_meshes() -> void:
