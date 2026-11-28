@@ -26,12 +26,19 @@ jobs:
           cp -r /tmp/godot-templates/templates/. ~/.local/share/godot/export_templates/4.7.stable/
       - name: Import resources
         run: /tmp/godot/Godot_v4.7-stable_linux.x86_64 --headless --editor --import --quit
-      - name: Check scene startup
-        run: /tmp/godot/Godot_v4.7-stable_linux.x86_64 --headless --path . --quit-after 10
       - name: Export web game
         run: |
           mkdir -p build/web
           /tmp/godot/Godot_v4.7-stable_linux.x86_64 --headless --export-release Web build/web/index.html
+      - name: Check exported game startup
+        shell: bash
+        run: |
+          pack="$PWD/build/web/index.pck"
+          cd "$(mktemp -d)"
+          /tmp/godot/Godot_v4.7-stable_linux.x86_64 --headless --main-pack "$pack" --quit-after 10 2>&1 | tee startup.log
+          if grep -q 'SCRIPT ERROR:' startup.log; then
+            exit 1
+          fi
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/web
