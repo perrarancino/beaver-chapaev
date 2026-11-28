@@ -1,6 +1,9 @@
 extends RefCounted
 
-const STAGES := 8
+enum RoundResult { PLAYER, BEAVER, DRAW }
+
+const ROUNDS_PER_MATCH := 3
+const WINS_TO_FINISH := 2
 const REWARDS: Array[Checker.Icon] = [
 	Checker.Icon.GHOST, Checker.Icon.EXPLOSIVE, Checker.Icon.ARMORED,
 	Checker.Icon.SNOWFLAKE, Checker.Icon.FLOATING, Checker.Icon.LIGHTNING, Checker.Icon.STICKY,
@@ -12,10 +15,9 @@ const ACTION_MULTIPLIERS := [1.0, 1.2, 1.5, 2.0, 2.7, 3.9]
 var score := 0
 var streak := 0
 var actions := 0
-var hit_slots: Dictionary[int, bool] = {}
 
 var stage := 1
-var wins := 0
+var round_results: Array[RoundResult] = []
 var completed_turns := 0
 var roster: Array[Checker.Icon] = []
 var rng: RandomNumberGenerator
@@ -27,7 +29,7 @@ func start(initial: Array[Checker.Icon], random: RandomNumberGenerator) -> void:
 	begin_player_turn()
 	rng = random
 	stage = 1
-	wins = 0
+	round_results.clear()
 	completed_turns = 0
 	roster = initial.duplicate()
 
@@ -78,18 +80,13 @@ func _reward_slot(icon: Checker.Icon) -> int:
 
 func begin_player_turn() -> void:
 	actions = 0
-	hit_slots.clear()
 
 
 func action_multiplier() -> float:
 	return ACTION_MULTIPLIERS[clampi(actions - 1, 0, ACTION_MULTIPLIERS.size() - 1)]
 
 
-func award(slot: int, knockout: bool) -> int:
-	if not knockout:
-		if hit_slots.has(slot):
-			return 0
-		hit_slots[slot] = true
+func award(knockout: bool) -> int:
 	if actions == 0:
 		streak += 1
 	actions += 1
@@ -105,6 +102,23 @@ func finish_turn(player_turn: bool) -> void:
 	completed_turns += 1
 
 
-func finish_round(won: bool) -> void:
-	if won:
-		wins += 1
+func finish_round(result: RoundResult) -> void:
+	if result != RoundResult.DRAW:
+		round_results.append(result)
+
+
+func player_wins() -> int:
+	return round_results.count(RoundResult.PLAYER)
+
+
+func beaver_wins() -> int:
+	return round_results.count(RoundResult.BEAVER)
+
+
+func match_finished() -> bool:
+	return player_wins() == WINS_TO_FINISH or beaver_wins() == WINS_TO_FINISH
+
+
+func next_opening_side() -> int:
+	# A drawn round does not change who opens the replay.
+	return 1 if not round_results.is_empty() and round_results.back() == RoundResult.PLAYER else 0

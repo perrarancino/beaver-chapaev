@@ -137,6 +137,7 @@ var float_used := false
 var wind_effect: MeshInstance3D
 var wind_lift := 0.0
 var wind_transition: Tween
+var _hover_time := 0.0
 var hovering := false:
 	set(value):
 		if hovering == value:
@@ -147,6 +148,7 @@ var hovering := false:
 				wind_transition.kill()
 			wind_transition = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
 			wind_transition.tween_method(_set_wind_lift, wind_lift, float(hovering), 0.20)
+			set_physics_process(true)
 var hover_started_turn := -1
 var rail_boost_used := false
 var zone_hits := 0
@@ -190,6 +192,7 @@ var linear_velocity: Vector3:
 
 
 func _ready() -> void:
+	set_physics_process(false)
 	planar_shape.shape = planar_shape.shape.duplicate()
 	place_on_board(position, rotation.y)
 	planar_body.body_entered.connect(_report_contact)
@@ -208,12 +211,45 @@ func _ready() -> void:
 	reset_physics_interpolation()
 
 
+func _physics_process(delta: float) -> void:
+	if hovering:
+		_hover_time += delta
+	elif is_zero_approx(wind_lift):
+		_hover_time = 0.0
+		set_physics_process(false)
+	_update_visual_pose()
+
+
 static func to_plane(vector: Vector3) -> Vector2:
 	return Vector2(vector.x, vector.z) * PIXELS_PER_UNIT
 
 
 static func from_plane(vector: Vector2, height := 0.0) -> Vector3:
 	return Vector3(vector.x / PIXELS_PER_UNIT, height, vector.y / PIXELS_PER_UNIT)
+
+
+static func slide_distance(speed: float, drag: float, friction: float) -> float:
+	return speed / drag - friction / (drag * drag) * log(1.0 + drag * speed / friction)
+
+
+static func speed_after_slide(speed: float, drag: float, friction: float, remaining: float) -> float:
+	var low := 0.0
+	var high := speed
+	for step in 8:
+		var guess := (low + high) * 0.5
+		if slide_distance(guess, drag, friction) < remaining:
+			low = guess
+		else:
+			high = guess
+	return (low + high) * 0.5
+
+
+static func sweep_disc(offset: Vector3, direction: Vector3, clearance: float) -> float:
+	var projection := offset.dot(direction)
+	var gap := clearance * clearance - (offset - direction * projection).length_squared()
+	if projection <= 0.0 or gap <= 0.0:
+		return INF
+	return maxf(projection - sqrt(gap), 0.0)
 
 
 func place_on_board(point: Vector3, yaw: float) -> void:
@@ -382,10 +418,14 @@ func _apply_impact_stretch(amount: float, board_axis: Vector3) -> void:
 
 
 func _update_visual_pose() -> void:
+	var yaw := angle_difference(0.0, _hover_time * 0.85)
+	var pitch := sin(_hover_time * 4.5) * 0.14
+	var roll := sin(_hover_time * 3.5 + 0.8) * 0.11
+	var sway := Basis.from_euler(Vector3(pitch, yaw, roll) * wind_lift)
 	var squash := Vector3(1.0 + _teleport_squash * 0.23, 1.0 - _teleport_squash, 1.0 + _teleport_squash * 0.23)
-	visual.basis = (Basis.from_euler(_teleport_angles) * _impact_basis).scaled(squash * _visual_size)
+	visual.basis = (Basis.from_euler(_teleport_angles) * _impact_basis * sway).scaled(squash * _visual_size)
 	var base_shift := HALF_HEIGHT * (_visual_size * squash.y - size_scale) + _teleport_rebound
-	visual.position.y = base_shift
+	visual.position.y = base_shift + sin(_hover_time * 4.1) * 0.014 * wind_lift
 	if turn_aura:
 		turn_aura.scale = Vector3.ONE * _visual_size
 		turn_aura.position.y = -0.052 * _visual_size + base_shift

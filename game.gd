@@ -1,16 +1,19 @@
 extends Node3D
 
+enum MarbleState { UNPLAYED, ACTIVE, WON, LOST }
+
 const Beaver := preload("res://beaver.gd")
 const Run := preload("res://checker_run.gd")
 const Rails := preload("res://edge_rails.gd")
 const BoardZones := preload("res://board_zones.gd")
-const PlayerHand := preload("res://player_hand.gd")
+const Fairy := preload("res://assets/lilith/lilith.gd")
 const LIGHT_PIECE := preload("res://piece_light.tscn")
 const DARK_PIECE := preload("res://piece_dark.tscn")
 const CheckerStrikeEffects := preload("res://assets/FX/checker_strike_effects.gd")
 const CheckerTrails := preload("res://assets/FX/checker_trails.gd")
 const CheckerBlast := preload("res://assets/FX/checker_blast.gd")
 const STICKY_SLIME_SHADER := preload("res://assets/FX/checker_sticky_slime.gdshader")
+const ROUND_MARBLES := preload("res://assets/ui/round-marbles.png")
 const MUSIC_TRACKS: Array[String] = [
 	"res://assets/music/khitryi_umysel.mp3",
 	"res://assets/music/balalaechnyi_manevr.mp3",
@@ -38,7 +41,7 @@ const SHOT_IMPULSE := 3.0
 const DRAG_DEAD_ZONE := 12.0
 const MIN_PULL_STRENGTH := 0.4
 const MAX_PULL_STRENGTH := 2.8
-const HAND_HOVER_CEILING := 3.6
+const NOSE_HIT_RADII := Vector2(0.38, 0.23)
 var pieces: Array[Checker] = []
 var formations: Array[PackedVector3Array] = [PackedVector3Array(), PackedVector3Array()]
 var player_setup: Array[Checker.Icon] = []
@@ -50,9 +53,6 @@ var links: Array[Dictionary] = []
 var lightning: Array[Dictionary] = []
 var selected: Checker
 var aiming := false
-var grabbing_nose := false
-var nose_drag_plane := Plane()
-var nose_drag_origin := Vector3.ZERO
 var drag_start := Vector2.ZERO
 var strike_offset := Vector3.ZERO
 var turn := 0 # 0 player, 1 beaver
@@ -67,9 +67,8 @@ var rest_poses: Dictionary[Checker, Transform3D] = {}
 var phasing_piece: Checker
 var ghost_previous_position := Vector2.ZERO
 var ghost_contacts: Array[Checker] = []
+var shot_planner := preload("res://checker_shot_planner.gd").new()
 var action_camera := preload("res://checker_action_camera.gd").new()
-var player_hand := PlayerHand.new()
-var hand_waiting_for_motion := false
 var camera: Camera3D
 var beaver_camera_transform: Transform3D
 var board_camera_transform: Transform3D
@@ -78,15 +77,14 @@ var camera_view_target := 0.0
 var intro_ui: Control
 var intro_transition: Tween
 var beaver_subtitle: Label
-var volume_control: PanelContainer
-var score_hud := VBoxContainer.new()
+var volume_control: HBoxContainer
+var round_hud: HBoxContainer
+var round_marbles: Array[TextureRect] = []
+var round_textures: Array[AtlasTexture] = []
 var score_label: Label
 var score_popups := Control.new()
-var pending_popups: Array[Label] = []
-var turn_start_score := 0
-var run_overlay: ColorRect
+var run_actions: CenterContainer
 var run_heading: Label
-var run_message: Label
 var run_choices: VBoxContainer
 var preview: MeshInstance3D
 var preview_mesh := ImmediateMesh.new()
@@ -97,9 +95,13 @@ var strike_effects := CheckerStrikeEffects.new()
 var checker_trails := CheckerTrails.new()
 var zones := BoardZones.new()
 var blast_effects := Node3D.new()
-var sticky_slime_mesh := PlaneMesh.new()
+var sticky_slime_mesh := SphereMesh.new()
 var rng := RandomNumberGenerator.new()
 var orbiting := false
+var nose_dragging := false
+var nose_grabbed := false
+var nose_drag_start := Vector2.ZERO
+var nose_drag_anchor := Vector3.ZERO
 var music_queue: Array[String] = []
 var last_music_path := ""
 var next_music: AudioStream
@@ -117,6 +119,7 @@ var music_failures := 0
 @onready var checker_ghost_touch_sound: AudioStreamPlayer = $CheckerSounds/GhostTouch
 @onready var board_pivot: Node3D = $BoardPivot
 @onready var rails: Rails = $BoardPivot/Rails
+@onready var lilith: Fairy = $Lilith
 @onready var beaver: Beaver = $Beaver
 @onready var beaver_voice = $Beaver/Voice
 @onready var aim_arrow: MeshInstance3D = $AimArrow
@@ -138,14 +141,14 @@ func _ready() -> void:
 		# The room still receives shadows from the board, pieces and beaver.
 		for mesh: MeshInstance3D in $Izba.find_children("*", "MeshInstance3D", true, false):
 			mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	lilith.configure_table(board_pivot.global_position + Vector3.UP * BOARD_TOP, TABLE_RADIUS, rails)
 	_build_ui()
 	_build_preview()
 	var slime_material := ShaderMaterial.new()
 	slime_material.shader = STICKY_SLIME_SHADER
 	sticky_slime_mesh.material = slime_material
-	sticky_slime_mesh.size = Vector2(0.26, 0.31)
-	player_hand.name = &"PlayerHand"
-	add_child(player_hand)
+	sticky_slime_mesh.radial_segments = 32
+	sticky_slime_mesh.rings = 16
 	board_pivot.add_child(checker_trails)
 	zones.name = &"BoardZones"
 	board_pivot.add_child(zones)
@@ -201,6 +204,8 @@ func _label(parent: Control, text_value: String, size: int, color: Color) -> Lab
 	l.text = text_value
 	l.add_theme_font_size_override("font_size", size)
 	l.add_theme_color_override("font_color", color)
+	l.add_theme_color_override("font_outline_color", Color("0b1019"))
+	l.add_theme_constant_override("outline_size", roundi(size * 0.3))
 	parent.add_child(l)
 	return l
 
@@ -212,151 +217,125 @@ func _build_ui() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(root)
 	_build_intro_ui(root)
-	_build_run_overlay(root)
 	_build_volume_control(root)
 	_build_score_hud(root)
+	_build_run_actions(root)
+	_build_round_hud(root)
+	root.resized.connect(_position_top_hud.bind(root))
+	score_label.minimum_size_changed.connect(_position_top_hud.bind(root))
+
+
+func _build_round_hud(root: Control) -> void:
+	round_hud = HBoxContainer.new()
+	round_hud.name = &"RoundTracker"
+	round_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	round_hud.add_theme_constant_override("separation", 8)
+	root.add_child(round_hud)
+	# The atlas cells are evenly spaced. Crop the transparent gutters around each marble.
+	var cell_width := float(ROUND_MARBLES.get_width()) / MarbleState.size()
+	var diameter := cell_width * 0.86
+	for i in MarbleState.size():
+		var texture := AtlasTexture.new()
+		texture.atlas = ROUND_MARBLES
+		texture.region = Rect2((i + 0.5) * cell_width - diameter * 0.5,
+			(ROUND_MARBLES.get_height() - diameter) * 0.5, diameter, diameter)
+		texture.filter_clip = true
+		round_textures.append(texture)
+	for _round in Run.ROUNDS_PER_MATCH:
+		var marble := TextureRect.new()
+		marble.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		marble.custom_minimum_size = Vector2(37, 37)
+		marble.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		marble.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		round_hud.add_child(marble)
+		round_marbles.append(marble)
+
+	round_hud.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT, Control.PRESET_MODE_MINSIZE, 16)
+	round_hud.hide()
+
+
+func _refresh_round_hud(active: bool) -> void:
+	var resolved := run.round_results.size()
+	for i in round_marbles.size():
+		var state := MarbleState.UNPLAYED
+		if i < resolved:
+			state = MarbleState.WON if run.round_results[i] == Run.RoundResult.PLAYER else MarbleState.LOST
+		elif i == resolved and active:
+			state = MarbleState.ACTIVE
+		round_marbles[i].texture = round_textures[state]
+
+
+func _position_top_hud(root: Control) -> void:
+	var round_size := round_hud.get_combined_minimum_size()
+	var volume_size := volume_control.get_combined_minimum_size()
+	var score_size := score_label.get_combined_minimum_size()
+	var side_space := (root.size.x - score_size.x) * 0.5 - 28.0
+	var second_row := score_label.position.y + score_size.y + 12.0
+	var round_fits := round_size.x <= side_space
+	var volume_fits := volume_size.x <= side_space
+	round_hud.position.y = 16.0 if round_fits else second_row
+	volume_control.position.y = 16.0 if volume_fits else second_row
+	volume_control.position.y += (round_size.y - volume_size.y) * 0.5
+	if not round_fits and not volume_fits and root.size.x < round_size.x + volume_size.x + 44.0:
+		volume_control.position.y = round_hud.position.y + round_size.y + 12.0
 
 func _build_score_hud(root: Control) -> void:
-	root.add_child(score_hud)
-	score_hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	score_hud.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_LEFT)
-	score_hud.offset_left = 16
-	score_hud.offset_top = -16
-	score_hud.offset_bottom = -16
-	score_hud.alignment = BoxContainer.ALIGNMENT_END
-	score_hud.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	score_hud.add_theme_constant_override("separation", 8)
-	score_label = _label(score_hud, "", 18, Color("fff1d5"))
-	score_label.add_theme_stylebox_override("normal", _panel_style(Color("30231bee")))
 	root.add_child(score_popups)
 	score_popups.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	score_popups.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	score_hud.hide()
+	score_label = _label(root, "", 23, Color("fff1d5"))
+	score_label.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	score_label.offset_top = 22
+	score_label.offset_bottom = 22
+	score_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	score_label.hide()
 
 
 func _refresh_score() -> void:
-	score_label.text = "Очки  %d     Серия ходов  %d  ·  ×%d" % [
-		run.score, run.streak, maxi(1, run.streak)]
+	score_label.text = "Очки  %d" % run.score
 
 
-func _multiplier_text(multiplier: float) -> String:
-	return ("%.2f" % multiplier).rstrip("0").trim_suffix(".").replace(".", ",")
-
-
-func _award(piece: Checker, knockout := false) -> void:
+func _award(piece: Checker, origin: Vector3, knockout := false) -> void:
 	if turn != 0 or phase != "moving" or piece.side != 1:
 		return
-	var points := run.award(piece.slot, knockout)
-	if points == 0:
-		return
+	var points := run.award(knockout)
 	_refresh_score()
-	var action := "Вылет" if knockout else "Попадание"
-	var multiplier := _multiplier_text(run.action_multiplier())
-	var font_size := 26 + roundi(12.0 * (run.action_multiplier() - 1.0))
-	font_size = maxi(14, roundi(font_size * minf(1.0, score_popups.size.x / 650.0)))
-	var popup := _score_popup("%s!  ×%s" % [action, multiplier], font_size,
-		Color("ffac78") if knockout else Color("ffe6a6"))
-	var widest := popup.get_theme_font("font").get_string_size(
-		"Попадание!  ×3,9", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
-	popup.custom_minimum_size.x = ceilf(widest.x) + popup.get_theme_stylebox("normal").get_minimum_size().x
-	_queue_score_popup(popup, _animate_score_event.bind(popup))
+	_show_score_popup(points, origin, knockout)
 
 
-func _animate_score_event(popup: Label) -> void:
-	var tween := popup.create_tween().set_ignore_time_scale(true)
-	tween.tween_interval(0.62)
-	tween.tween_property(popup, "modulate:a", 0.0, 0.20)
-	tween.tween_callback(_dismiss_score_popup.bind(popup))
-
-
-func _score_popup(caption: String, font_size: int, ink: Color) -> Label:
-	var popup := _label(score_popups, caption, font_size, ink)
-	popup.hide()
-	popup.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	popup.add_theme_stylebox_override("normal", _panel_style(Color("302019f5")))
-	popup.rotation_degrees = randf_range(-10.0, 10.0)
-	return popup
-
-
-func _queue_score_popup(popup: Label, animate: Callable, centered := false) -> void:
+func _show_score_popup(points: int, origin: Vector3, knockout: bool) -> void:
+	var size := 46.0 if knockout else minf(46.0, 26.0 + 6.0 * run.action_multiplier())
+	var font_size := roundi(size * clampf(score_popups.size.x / 600.0, 0.65, 1.0))
+	var popup := _label(score_popups, "+%d" % points, font_size,
+		Color("ffad70") if knockout else Color("ffe59a"))
 	popup.reset_size()
 	popup.pivot_offset = popup.size * 0.5
-	popup.set_meta("centered", centered)
-	popup.visibility_changed.connect(animate, CONNECT_ONE_SHOT)
-	pending_popups.append(popup)
-	_place_pending_popups()
+	popup.scale = Vector2.ONE * 0.6
+	var drift := (popup.size.x * 0.67 + randf_range(12.0, 23.0)) * (-1.0 if run.actions % 2 == 0 else 1.0)
+	popup.rotation_degrees = signf(drift) * 13.0
+	_position_score_popup(0.0, popup, origin, drift)
+	var tween := popup.create_tween().set_ignore_time_scale(true).set_parallel()
+	tween.tween_method(_position_score_popup.bind(popup, origin, drift), 0.0, 1.0, 0.82)
+	tween.tween_property(popup, "scale", Vector2.ONE * 1.18, 0.12).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tween.tween_property(popup, "scale", Vector2.ONE * 0.92, 0.22).set_delay(0.12).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_property(popup, "rotation_degrees", 0.0, 0.38).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tween.tween_property(popup, "modulate:a", 0.0, 0.34).set_delay(0.48).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tween.chain().tween_callback(popup.queue_free)
 
 
-func _dismiss_score_popup(popup: Label) -> void:
-	popup.hide()
-	popup.queue_free()
-	_place_pending_popups()
-
-
-func _place_pending_popups() -> void:
-	while not pending_popups.is_empty():
-		var popup := pending_popups[0]
-		var center := _free_popup_center(popup)
-		if center == Vector2.INF:
-			break
-		pending_popups.pop_front()
-		popup.position = center - popup.pivot_offset
-		popup.scale = Vector2.ONE * 0.78
-		popup.show()
-		var punch := popup.create_tween().set_ignore_time_scale(true)
-		punch.tween_property(popup, "scale", Vector2.ONE, 0.13).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
-
-
-func _popup_extent(popup: Label) -> Vector2:
-	var half := popup.size * 0.52 # Includes the entrance tween's overshoot.
-	var c := absf(cos(popup.rotation))
-	var s := absf(sin(popup.rotation))
-	return Vector2(c * half.x + s * half.y, s * half.x + c * half.y) + Vector2(4, 4)
-
-
-func _free_popup_center(popup: Label) -> Vector2:
+func _position_score_popup(progress: float, popup: Label, origin: Vector3, drift: float) -> void:
 	var area := score_popups.size
-	var extent := _popup_extent(popup)
-	var left := clampf(extent.x, area.x * 0.25, area.x * 0.5)
-	var top := minf(extent.y, area.y / 6.0)
-	var centered: bool = popup.get_meta("centered")
-	var occupied: Array[Rect2] = []
-	for older: Label in score_popups.get_children():
-		if older.visible:
-			var radius := _popup_extent(older)
-			occupied.append(Rect2(older.position + older.pivot_offset - radius, radius * 2.0))
-	for attempt in (1 if centered else 32):
-		var center := area * 0.5
-		if not centered:
-			center = Vector2(randf_range(left, area.x - left), randf_range(top, area.y / 3.0 - top))
-		var bounds := Rect2(center - extent, extent * 2.0)
-		var free := true
-		for other in occupied:
-			if bounds.intersects(other):
-				free = false
-				break
-		if free:
-			return center
-	return Vector2.INF
-
-
-func _show_turn_style(points: int, multiplier: int) -> void:
-	var format_text := "Стиль!\n%d очков   ·   Серия ×%d"
-	# Reserve the final width so the counter stays centered while the digits change.
-	var popup := _score_popup(format_text % [points, multiplier], 32, Color("ffe6a6"))
-	popup.custom_minimum_size = popup.get_combined_minimum_size()
-	_queue_score_popup(popup, _animate_turn_style.bind(popup, format_text, points, multiplier), true)
-
-
-func _animate_turn_style(popup: Label, format_text: String, points: int, multiplier: int) -> void:
-	var count := func(value: float) -> void:
-		popup.text = format_text % [roundi(value), multiplier]
-	count.call(0.0)
-	var tween := popup.create_tween().set_ignore_time_scale(true)
-	tween.tween_method(count, 0.0, float(points), 0.55).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tween.tween_interval(0.65)
-	tween.tween_property(popup, "modulate:a", 0.0, 0.18)
-	tween.tween_callback(_dismiss_score_popup.bind(popup))
+	var anchor := camera.unproject_position(origin)
+	if camera.is_position_behind(origin):
+		var camera_side := camera.global_basis.x.dot(origin - camera.global_position)
+		anchor = Vector2(0.0 if camera_side < 0.0 else area.x, area.y * 0.55)
+	var rise := (22.0 if drift < 0.0 else 14.0) + 76.0 * (1.0 - pow(1.0 - progress, 2.0))
+	var spread := 1.26 - pow(1.0 - progress, 4.0)
+	var center := anchor + Vector2(drift * spread, -rise)
+	var margin := (popup.pivot_offset * 1.3 + Vector2(10.0, 10.0)).min(area * 0.5)
+	var top := minf(score_label.get_rect().end.y + margin.y, area.y * 0.5)
+	center = center.clamp(Vector2(margin.x, top), area - margin)
+	popup.position = center - popup.pivot_offset
 
 
 func _build_intro_ui(root: Control) -> void:
@@ -385,22 +364,20 @@ func _build_intro_ui(root: Control) -> void:
 	skip_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 func _build_volume_control(root: Control) -> void:
-	volume_control = PanelContainer.new()
-	volume_control.mouse_force_pass_scroll_events = false
-	volume_control.add_theme_stylebox_override("panel", _panel_style(Color("2b221df0")))
+	volume_control = HBoxContainer.new()
+	volume_control.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	volume_control.add_theme_constant_override("separation", 12)
 	root.add_child(volume_control)
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 12)
-	volume_control.add_child(row)
-	_label(row, "Громкость", 16, Color("f5dfb8"))
+	_label(volume_control, "Громкость", 16, Color("f5dfb8"))
 	var slider := HSlider.new()
 	slider.name = &"Volume"
+	slider.mouse_force_pass_scroll_events = false
 	slider.custom_minimum_size.x = 116
 	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	slider.step = 1.0
 	slider.value = 0.0 if AudioServer.is_bus_mute(0) else db_to_linear(AudioServer.get_bus_volume_db(0)) * 100.0
 	slider.value_changed.connect(_set_master_volume)
-	row.add_child(slider)
+	volume_control.add_child(slider)
 	volume_control.set_anchors_and_offsets_preset(
 		Control.PRESET_TOP_RIGHT, Control.PRESET_MODE_MINSIZE, 16)
 	volume_control.hide()
@@ -491,15 +468,13 @@ func _play_intro() -> void:
 	beaver.addressing_player = true
 	if OS.has_feature("web"):
 		# Browsers need a player gesture to unlock audio.
-		var button := Button.new()
-		button.text = "Начать"
+		var button := _text_button("Начать")
 		intro_ui.add_child(button)
 		button.set_anchors_and_offsets_preset(Control.PRESET_CENTER_BOTTOM)
 		button.offset_left = -80
 		button.offset_right = 80
 		button.offset_top = -94
 		button.offset_bottom = -50
-		button.add_theme_stylebox_override("normal", _panel_style(Color("41322a")))
 		button.grab_focus()
 		button.pressed.connect(func() -> void:
 			button.queue_free()
@@ -512,11 +487,13 @@ func _speak_intro() -> void:
 	await beaver_voice.speak(&"intro")
 	if phase != "intro":
 		return
+	_end_nose_drag()
 	intro_transition = create_tween().set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 	intro_transition.tween_property(camera, "transform", beaver_camera_transform, 0.45)
 	intro_transition.finished.connect(_finish_intro, CONNECT_ONE_SHOT)
 
 func _finish_intro() -> void:
+	_end_nose_drag()
 	camera.transform = beaver_camera_transform
 	beaver.addressing_player = false
 	beaver_voice.subtitle_changed.disconnect(_set_beaver_subtitle)
@@ -531,73 +508,71 @@ func _skip_intro() -> void:
 	_finish_intro()
 	beaver_voice.skip_line()
 
-func _panel_style(color: Color) -> StyleBoxFlat:
-	var style := StyleBoxFlat.new()
-	style.bg_color = color
-	style.border_color = Color("7b6148")
-	style.set_border_width_all(1)
-	style.set_corner_radius_all(10)
-	style.content_margin_left = 18
-	style.content_margin_right = 18
-	style.content_margin_top = 12
-	style.content_margin_bottom = 12
-	return style
-
-func _build_run_overlay(root: Control) -> void:
-	run_overlay = ColorRect.new()
-	run_overlay.color = Color("15110dc9")
-	root.add_child(run_overlay)
-	run_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var center := CenterContainer.new()
-	run_overlay.add_child(center)
-	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var panel := PanelContainer.new()
-	panel.custom_minimum_size.x = 435
-	panel.add_theme_stylebox_override("panel", _panel_style(Color("2b221d")))
-	center.add_child(panel)
+func _build_run_actions(root: Control) -> void:
+	run_actions = CenterContainer.new()
+	run_actions.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	root.add_child(run_actions)
+	run_actions.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var stack := VBoxContainer.new()
-	stack.add_theme_constant_override("separation", 13)
-	panel.add_child(stack)
+	stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	stack.add_theme_constant_override("separation", 10)
+	run_actions.add_child(stack)
 	run_heading = _label(stack, "", 27, Color("fff0d1"))
-	run_message = _label(stack, "", 16, Color("dbc39f"))
-	run_message.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	run_heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	run_choices = VBoxContainer.new()
+	run_choices.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	run_choices.add_theme_constant_override("separation", 8)
 	stack.add_child(run_choices)
-	run_overlay.hide()
+	run_actions.hide()
 
-func _choice_button(title: String, detail: String, action: Callable) -> void:
+func _text_button(title: String) -> Button:
 	var button := Button.new()
 	button.text = title
 	button.custom_minimum_size.y = 40
-	button.add_theme_color_override("font_color", Color("f5dfb8"))
-	button.add_theme_stylebox_override("normal", _panel_style(Color("41322a")))
-	button.add_theme_stylebox_override("hover", _panel_style(Color("5b4432")))
-	button.add_theme_stylebox_override("pressed", _panel_style(Color("684e37")))
+	button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	button.add_theme_font_size_override("font_size", 20)
+	button.add_theme_color_override("font_color", Color("f8f3e6"))
+	button.add_theme_color_override("font_hover_color", Color("9ef0ff"))
+	button.add_theme_color_override("font_focus_color", Color("ffe9a6"))
+	button.add_theme_color_override("font_outline_color", Color("0b1019"))
+	button.add_theme_constant_override("outline_size", 8)
+	var empty := StyleBoxEmpty.new()
+	for style in ["normal", "hover", "pressed", "hover_pressed", "focus"]:
+		button.add_theme_stylebox_override(style, empty)
+	return button
+
+func _choice_button(title: String, detail: String, action: Callable) -> void:
+	var button := _text_button(title)
 	button.pressed.connect(action)
 	run_choices.add_child(button)
 	if run_choices.get_child_count() == 1:
 		button.grab_focus()
 	if not detail.is_empty():
-		var caption := _label(run_choices, detail, 15, Color("dec9aa"))
+		var caption := _label(run_choices, detail, 14, Color("e4edf4"))
+		caption.custom_minimum_size.x = 420
+		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
-func _show_run_result(title: String, message: String) -> void:
+func _show_run_actions(title: String) -> void:
+	_clear_score_popups()
 	for child in run_choices.get_children():
 		run_choices.remove_child(child)
 		child.queue_free()
 	run_heading.text = title
-	run_message.text = message
-	run_overlay.show()
+	run_heading.visible = not title.is_empty()
+	run_actions.show()
 
-func _start_run() -> void:
-	run.start(player_setup, rng)
-	pending_popups.clear()
+func _clear_score_popups() -> void:
 	for popup in score_popups.get_children():
 		popup.hide()
 		popup.queue_free()
-	score_hud.show()
+
+func _start_run() -> void:
+	run.start(player_setup, rng)
+	score_label.show()
+	round_hud.show()
 	_refresh_score()
+	_position_top_hud(round_hud.get_parent() as Control)
 	_new_round()
 
 func _set_beaver_subtitle(text: String) -> void:
@@ -605,6 +580,7 @@ func _set_beaver_subtitle(text: String) -> void:
 
 
 func _exit_tree() -> void:
+	Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 	action_camera.restore()
 
 
@@ -623,6 +599,7 @@ func _update_camera(delta: float) -> void:
 
 
 func _new_round() -> void:
+	_clear_score_popups()
 	run.begin_player_turn()
 	action_camera.new_shot()
 	_end_player_drag()
@@ -650,10 +627,10 @@ func _new_round() -> void:
 			_make_piece(side, roster[slot], point, slot)
 			starting_positions.append(Vector2(point.x, point.z))
 	zones.populate(rng, BOARD_TOP, starting_positions)
-	turn = 0
-	_start_zone_turn()
-	phase = "aim"
-	run_overlay.hide()
+	turn = run.next_opening_side()
+	_refresh_round_hud(true)
+	run_actions.hide()
+	_begin_turn()
 
 func _make_piece(side: int, icon: Checker.Icon, pos: Vector3, slot: int) -> Checker:
 	var scene := LIGHT_PIECE if side == 0 else DARK_PIECE
@@ -678,14 +655,18 @@ func _input(event: InputEvent) -> void:
 		if not event.echo:
 			_skip_intro()
 		return
-	if grabbing_nose and _handle_nose_drag(event):
+	# A drag can end over the volume control.
+	if nose_dragging and event is InputEventMouse:
+		if event is InputEventMouseMotion:
+			if (event.button_mask & MOUSE_BUTTON_MASK_LEFT) == 0:
+				_end_nose_drag()
+			elif nose_grabbed and event.relative.length_squared() > 49.0:
+				beaver_voice.react_to_nose_pull()
+		elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+			_end_nose_drag()
 		get_viewport().set_input_as_handled()
 		return
-	# A drag can end over the volume control.
 	if event is InputEventMouseMotion:
-		if hand_waiting_for_motion and _is_player_turn() and action_camera.mode == action_camera.Mode.IDLE \
-				and not event.relative.is_zero_approx():
-			hand_waiting_for_motion = false
 		if orbiting:
 			if (event.button_mask & MOUSE_BUTTON_MASK_LEFT) == 0:
 				_finish_board_rotation()
@@ -703,7 +684,7 @@ func _input(event: InputEvent) -> void:
 			var offset := strike_offset
 			_cancel_aim()
 			if not shot.is_zero_approx():
-				_player_flick(piece, shot, offset)
+				_player_kick(piece, shot, offset)
 		else:
 			return
 		get_viewport().set_input_as_handled()
@@ -719,6 +700,15 @@ func _is_player_turn() -> bool:
 	return phase == "aim" and turn == 0
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		if _can_drag_nose():
+			var nose := beaver.nose_transform()
+			if _nose_hit(event.position, nose):
+				nose_dragging = true
+				nose_drag_start = event.position
+				nose_drag_anchor = nose.origin
+				get_viewport().set_input_as_handled()
+				return
 	if phase == "intro":
 		return
 	if (event is InputEventMouseButton and event.pressed
@@ -731,14 +721,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not _is_player_turn() or action_camera.mode != action_camera.Mode.IDLE or aiming or orbiting:
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		if _grab_beaver_nose(event.position):
-			get_viewport().set_input_as_handled()
-			return
 		var ray_start := camera.project_ray_origin(event.position)
 		var hit := _piece_hit(event.position)
 		var picked := hit.get("collider") as Checker
 		if picked and picked.side == 0:
-			hand_waiting_for_motion = false
 			selected = picked
 			picked.set_turn_aura_selected(true)
 			drag_start = event.position
@@ -749,59 +735,58 @@ func _unhandled_input(event: InputEvent) -> void:
 			_begin_board_rotation()
 
 
-func _on_beaver_nose(cursor: Vector2, nose: Transform3D, reach := 1.0) -> bool:
-	var ray := camera.project_ray_normal(cursor)
-	if ray.dot(nose.basis.z) > -0.30:
+func _can_drag_nose() -> bool:
+	var intro_closeup := phase == "intro" and (intro_transition == null or not intro_transition.is_running())
+	return ((intro_closeup or _is_player_turn()) and action_camera.mode == action_camera.Mode.IDLE
+		and not aiming and not orbiting and beaver.can_grab_nose())
+
+
+func _nose_hit(cursor: Vector2, nose: Transform3D) -> bool:
+	if camera.is_position_behind(nose.origin):
 		return false
-	var plane := Plane(nose.basis.z, nose.origin)
-	var hit: Variant = plane.intersects_ray(camera.project_ray_origin(cursor), ray)
+	var hit: Variant = Plane(nose.basis.z, nose.origin).intersects_ray(
+		camera.project_ray_origin(cursor), camera.project_ray_normal(cursor))
 	if hit == null:
 		return false
-	var local: Vector3 = nose.basis.transposed() * (hit - nose.origin)
-	return Vector2(local.x / 0.31, local.y / 0.23).length_squared() <= reach * reach
+	var local_hit := nose.affine_inverse() * (hit as Vector3)
+	# The grip point sits to the side of the center of the nose.
+	var hit_offset := Vector2(local_hit.x + 0.21, local_hit.y)
+	return (hit_offset / NOSE_HIT_RADII).length_squared() <= 1.0
 
 
-func _grab_beaver_nose(cursor: Vector2) -> bool:
-	var nose := beaver.nose_transform()
-	if not _on_beaver_nose(cursor, nose):
+func _update_nose_drag(cursor: Vector2) -> bool:
+	var available := _can_drag_nose()
+	if nose_dragging and not available:
+		_end_nose_drag()
+	if not nose_dragging:
+		var hovering := (available and get_viewport().get_visible_rect().has_point(cursor)
+			and _nose_hit(cursor, beaver.nose_transform()))
+		Input.set_default_cursor_shape(Input.CURSOR_POINTING_HAND if hovering else Input.CURSOR_ARROW)
 		return false
-	nose_drag_plane = Plane(camera.global_basis.z, nose.origin)
-	var start: Variant = nose_drag_plane.intersects_ray(camera.project_ray_origin(cursor),
-		camera.project_ray_normal(cursor))
-	if start == null:
-		return false
-	nose_drag_origin = start
-	grabbing_nose = true
-	hand_waiting_for_motion = false
-	camera_view_target = camera_view
-	beaver.grab_nose()
-	beaver_voice.react_to_nose_pull()
+
+	Input.set_default_cursor_shape(Input.CURSOR_DRAG)
+	lilith.reach_for_nose(beaver.nose_transform().origin, beaver.global_rotation.y)
+	if lilith.has_nose_grip():
+		var depth := maxf(camera.near, -camera.to_local(nose_drag_anchor).z)
+		var offset := camera.project_position(cursor, depth) - camera.project_position(nose_drag_start, depth)
+		if nose_grabbed:
+			beaver.pull_nose(offset)
+		else:
+			beaver.grab_nose(offset)
+			nose_grabbed = true
+			beaver_voice.react_to_nose_pull()
 	return true
 
 
-func _handle_nose_drag(event: InputEvent) -> bool:
-	if event is InputEventMouseMotion:
-		if (event.button_mask & MOUSE_BUTTON_MASK_LEFT) == 0:
-			_release_beaver_nose()
-		else:
-			var point: Variant = nose_drag_plane.intersects_ray(camera.project_ray_origin(event.position),
-				camera.project_ray_normal(event.position))
-			if point != null:
-				beaver.pull_nose(point - nose_drag_origin)
-				if event.relative.length_squared() > 49.0:
-					beaver_voice.react_to_nose_pull()
-		return true
-	if event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
-			_release_beaver_nose()
-		return true
-	return false
-
-
-func _release_beaver_nose() -> void:
-	if grabbing_nose:
-		grabbing_nose = false
+func _end_nose_drag() -> void:
+	if not nose_dragging:
+		return
+	nose_dragging = false
+	lilith.release_nose()
+	if nose_grabbed:
 		beaver.release_nose()
+		nose_grabbed = false
+	Input.set_default_cursor_shape(Input.CURSOR_ARROW)
 
 
 func _piece_hit(cursor: Vector2) -> Dictionary:
@@ -833,6 +818,7 @@ func _piece_hit(cursor: Vector2) -> Dictionary:
 	return result
 
 func _cancel_aim() -> void:
+	lilith.cancel_aim()
 	if is_instance_valid(selected):
 		selected.set_turn_aura_selected(false)
 	selected = null
@@ -842,7 +828,7 @@ func _cancel_aim() -> void:
 	preview.hide()
 
 func _end_player_drag() -> void:
-	_release_beaver_nose()
+	_end_nose_drag()
 	_finish_board_rotation()
 	_cancel_aim()
 
@@ -898,9 +884,6 @@ func _edge_distance(start: Vector3, direction: Vector3, margin := 0.015) -> floa
 	return Rails.ray_exit_distance(Vector2(origin.x, origin.z),
 		Vector2(local_direction.x, local_direction.z), TABLE_RADIUS - margin)
 
-func _slide_distance(speed: float, drag: float, friction: float) -> float:
-	return speed / drag - friction / (drag * drag) * log(1.0 + drag * speed / friction)
-
 func _draw_trajectory(piece: Checker, shot: Vector3) -> void:
 	var origin := _on_board(piece.global_position)
 	var velocity := shot * SHOT_IMPULSE * piece.shot_multiplier() / piece.mass
@@ -919,7 +902,7 @@ func _draw_trajectory(piece: Checker, shot: Vector3) -> void:
 		if speed < 0.12:
 			break
 		var direction := velocity / speed
-		var slide_distance := _slide_distance(speed, drag, friction)
+		var slide_distance := Checker.slide_distance(speed, drag, friction)
 		var distance := minf(slide_distance, _edge_distance(origin, direction))
 		var local_origin := board_pivot.to_local(origin)
 		var local_direction := board_pivot.global_basis.inverse() * direction
@@ -931,12 +914,7 @@ func _draw_trajectory(piece: Checker, shot: Vector3) -> void:
 			if other == piece or other == previous or other.falling or other.is_intangible():
 				continue
 			var offset := _on_board(other.global_position) - origin
-			var projection := offset.dot(direction)
-			var clearance := radius + other.radius
-			var gap := clearance * clearance - (offset - direction * projection).length_squared()
-			if projection <= 0.0 or gap <= 0.0:
-				continue
-			var intersection := maxf(projection - sqrt(gap), 0.0)
+			var intersection := Checker.sweep_disc(offset, direction, radius + other.radius)
 			if intersection < distance:
 				target = other
 				distance = intersection
@@ -958,14 +936,7 @@ func _draw_trajectory(piece: Checker, shot: Vector3) -> void:
 			break
 		origin += direction * distance
 		# Estimate speed at impact with the same sliding and damping as a normal checker.
-		var low := 0.0
-		var high := speed
-		var remaining := slide_distance - distance
-		for step in 8:
-			var guess := (low + high) * 0.5
-			if _slide_distance(guess, drag, friction) < remaining: low = guess
-			else: high = guess
-		velocity = direction * (low + high) * 0.5
+		velocity = direction * Checker.speed_after_slide(speed, drag, friction, slide_distance - distance)
 		if zone:
 			visited |= 1 << zone.kind
 			match zone.kind:
@@ -1056,65 +1027,41 @@ func _aim_vector(cursor: Vector2) -> Vector3:
 		return Vector3.ZERO
 	return origin.direction_to(hit) * _pull_strength(drag)
 
-func _update_player_hand(delta: float) -> void:
-	if grabbing_nose and (not _is_player_turn() or action_camera.mode != action_camera.Mode.IDLE):
-		_release_beaver_nose()
-	if action_camera.mode != action_camera.Mode.IDLE:
-		player_hand.hide()
+func _update_lilith() -> void:
+	var viewport := get_viewport()
+	var cursor := viewport.get_mouse_position()
+	if _update_nose_drag(cursor):
 		return
-	var cursor := get_viewport().get_mouse_position()
-	if grabbing_nose:
-		player_hand.reach_for_nose(delta, beaver.nose_transform(), camera.global_basis, true)
+	var look_target := Vector3.INF
+	if phase != "intro" and action_camera.mode == action_camera.Mode.IDLE and viewport.get_visible_rect().has_point(cursor):
+		var hit: Variant = Plane(Vector3.UP, BOARD_TOP + 0.56).intersects_ray(
+			camera.project_ray_origin(cursor), camera.project_ray_normal(cursor))
+		if hit != null:
+			look_target = hit
+	lilith.track_cursor(look_target)
+
+	if not aiming or not is_instance_valid(selected):
 		return
-	var bounds := get_viewport().get_visible_rect()
-	if not _is_player_turn() or hand_waiting_for_motion or orbiting or not bounds.has_point(cursor) \
-			or (not aiming and volume_control.get_global_rect().has_point(cursor)):
-		player_hand.withdraw()
-		return
-	if not aiming:
-		var nose := beaver.nose_transform()
-		if _on_beaver_nose(cursor, nose, 1.60):
-			player_hand.reach_for_nose(delta, nose, camera.global_basis, false)
-			return
-
-	var facing := (-camera.global_basis.z).slide(Vector3.UP).normalized()
-	if aiming:
-		var shot := _aim_vector(cursor)
-		if not shot.is_zero_approx():
-			facing = shot.normalized()
-			var power := shot.length() / MAX_PULL_STRENGTH
-			var contact := _player_finger_contact(selected, facing, strike_offset)
-			player_hand.aim(delta, contact, facing, power)
-			return
-
-	var ray_start := camera.project_ray_origin(cursor)
-	var ray_direction := camera.project_ray_normal(cursor)
-	var hover_hit: Variant = Plane(Vector3.UP, BOARD_TOP + PlayerHand.HOVER_HEIGHT) \
-		.intersects_ray(ray_start, ray_direction)
-	# Keep the hand on the cursor ray even when it points above the tabletop.
-	var depth := -camera.to_local(board_pivot.global_position).z + TABLE_RADIUS
-	if hover_hit != null:
-		depth = minf(depth, -camera.to_local(hover_hit).z)
-	var target := camera.project_position(cursor, depth)
-	if target.y > HAND_HOVER_CEILING and ray_start.y < HAND_HOVER_CEILING:
-		target = ray_start.lerp(target, inverse_lerp(ray_start.y, target.y, HAND_HOVER_CEILING))
-	player_hand.follow(delta, target, facing)
+	var shot := _aim_vector(cursor)
+	var direction := (-camera.global_basis.z).slide(Vector3.UP).normalized()
+	if not shot.is_zero_approx():
+		direction = shot.normalized()
+	lilith.aim(_kick_contact(selected, direction, strike_offset),
+		direction, shot.length() / MAX_PULL_STRENGTH)
 
 
-func _player_finger_contact(piece: Checker, direction: Vector3, offset: Vector3) -> Vector3:
+func _kick_contact(piece: Checker, direction: Vector3, offset: Vector3) -> Vector3:
 	var lateral := offset.slide(direction).limit_length(piece.radius * 0.75)
 	var depth := sqrt(piece.radius * piece.radius - lateral.length_squared())
 	return piece.global_position + lateral - direction * depth + Vector3.UP * (0.035 * piece.size_scale)
 
 
-func _player_flick(piece: Checker, shot: Vector3, offset: Vector3) -> void:
-	hand_waiting_for_motion = true
+func _player_kick(piece: Checker, shot: Vector3, offset: Vector3) -> void:
 	phase = "player_strike"
 	var direction := shot.normalized()
 	var strength := shot.length()
-	await player_hand.flick(_player_finger_contact(piece, direction, offset), direction,
-		strength / MAX_PULL_STRENGTH)
-	player_hand.recover(direction)
+	await lilith.kick(_kick_contact(piece, direction, offset), direction, strength / MAX_PULL_STRENGTH)
+	lilith.recover(direction)
 	if is_instance_valid(piece) and not piece.is_queued_for_deletion():
 		_shoot(piece, direction, strength, offset)
 	else:
@@ -1137,7 +1084,6 @@ func _shoot(piece: Checker, direction: Vector3, strength: float, offset := Vecto
 
 func _begin_shot_resolution() -> void:
 	if turn == 0:
-		turn_start_score = run.score
 		run.begin_player_turn()
 	action_camera.new_shot()
 	phase = "moving"
@@ -1189,7 +1135,7 @@ func _resolve_ghost_contacts() -> void:
 		var nearest := Geometry2D.get_closest_point_to_segment(center, ghost_previous_position, point)
 		if center.distance_squared_to(nearest) <= radius * radius:
 			ghost_contacts.append(other)
-			_award(other)
+			_award(other, other.global_position + Vector3.UP * other.half_height)
 			checker_ghost_touch_sound.play()
 			_push(other, phasing_piece.linear_velocity * ((phasing_piece.zone_power - 1.0) * 0.85))
 			_trigger_contact(other, phasing_piece)
@@ -1204,17 +1150,19 @@ func _touch(a: Checker, b: Checker, normal: Vector3) -> void:
 	var a_speed := a.incoming_velocity.dot(normal)
 	var b_speed := -b.incoming_velocity.dot(normal)
 	var closing_speed := a_speed + b_speed
+	var a_struck := a_speed >= b_speed
+	var contact_point := a.position.lerp(b.position, a.radius / (a.radius + b.radius))
 	if closing_speed > 0.0:
+		var target := b if a_struck else a
 		if a.side != b.side:
-			_award(a if a.side == 1 else b)
-		elif a.side == 1:
-			_award(b if a_speed >= b_speed else a)
+			target = a if a.side == 1 else b
+		if target.side == 1:
+			var origin := board_pivot.to_global(contact_point) + Vector3.UP * target.half_height
+			_award(target, origin)
 	if closing_speed > 0.32:
 		checker_hit_sound.play()
-		var a_struck := a_speed >= b_speed
 		var intensity := clampf(closing_speed / 4.7, 0.08, 1.0)
-		var contact_point := a.position.lerp(b.position, 0.5)
-		action_camera.hit(board_pivot.to_global(contact_point))
+		action_camera.hit(board_pivot.to_global(contact_point), lilith.global_position if turn == 0 else Vector3.INF)
 		var icon := a.icon if a_struck else b.icon
 		if not strike_effects.element_planes.has(icon):
 			icon = b.icon if a_struck else a.icon
@@ -1263,6 +1211,7 @@ func _stick_pieces(a: Checker, b: Checker) -> void:
 	var slime := MeshInstance3D.new()
 	slime.name = "StickySlime"
 	slime.mesh = sticky_slime_mesh
+	slime.custom_aabb = AABB(Vector3.ONE * -0.6, Vector3.ONE * 1.2)
 	slime.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	slime.physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	board_pivot.add_child(slime)
@@ -1289,15 +1238,17 @@ func _update_sticky_slime(link: Dictionary) -> void:
 	var slime: MeshInstance3D = link.slime
 	var start := board_pivot.to_local(a.get_global_transform_interpolated().origin)
 	var end := board_pivot.to_local(b.get_global_transform_interpolated().origin)
-	var axis := start.direction_to(end)
-	var side := axis.cross(Vector3.UP).normalized()
-	if side.is_zero_approx():
-		axis = Vector3.RIGHT
-		side = Vector3.BACK
+	var flat_offset := (end - start).slide(Vector3.UP)
+	var distance := flat_offset.length()
+	var forward := flat_offset / distance if distance > 0.001 else Vector3.RIGHT
+	# Bury both ends in the rims so the gel meets the curved sides of the checkers.
+	var inset := minf((a.radius + b.radius) * 0.5 - 0.065, distance * 0.4)
+	var span := end - start - forward * (inset * 2.0)
+	var axis := span.normalized() if span.length_squared() > 0.000001 else forward
+	var side := forward.cross(Vector3.UP)
 	var up := side.cross(axis)
-	var scale_factor := (a.size_scale + b.size_scale) * 0.5
-	var shape := Basis(axis, up, side).scaled(Vector3.ONE * scale_factor)
-	slime.transform = Transform3D(shape, start.lerp(end, 0.5) + up * (0.072 * scale_factor))
+	var shape := Basis(side * 0.24, axis * maxf(span.length(), 0.015), up * 0.092)
+	slime.transform = Transform3D(shape, start.lerp(end, 0.5))
 
 func _release_link(index: int) -> void:
 	var link := links[index]
@@ -1388,7 +1339,7 @@ func _find_lightning_target(origin: Vector3, source_side: int, seen: Array) -> C
 
 func _process(delta: float) -> void:
 	_update_camera(delta)
-	_update_player_hand(delta)
+	_update_lilith()
 	checker_trails.update_trails(delta, pieces, phase == "moving")
 	for link in links:
 		_update_sticky_slime(link)
@@ -1482,7 +1433,7 @@ func _eliminate(piece: Checker) -> void:
 	var outward := Vector3.ZERO
 	if not _is_outside_board(piece.position, -piece.radius - 0.015):
 		outward = board_pivot.global_basis * piece.position.slide(Vector3.UP).normalized()
-	_award(piece, true)
+	_award(piece, piece.global_position + Vector3.UP * piece.half_height, true)
 	piece.leave_board(outward)
 	action_camera.fall(piece, board_pivot.global_position)
 	if not shot_knockouts[piece.side]:
@@ -1786,9 +1737,6 @@ func _end_ghost_phase() -> void:
 func _finish_shot() -> void:
 	action_camera.restore()
 	run.finish_turn(turn == 0)
-	if turn == 0:
-		_show_turn_style(run.score - turn_start_score, maxi(1, run.streak))
-	_refresh_score()
 	contacts.clear()
 	var counts := [0, 0]
 	for p in pieces:
@@ -1796,40 +1744,47 @@ func _finish_shot() -> void:
 		counts[p.side] += 1
 	if counts[0] == 0 or counts[1] == 0:
 		phase = "round_end"
-		run.finish_round(counts[1] == 0 and counts[0] > 0)
-		var result_cue: StringName
-		if counts[0] == 0 and counts[1] == 0:
-			result_cue = &"draw"
-		elif counts[1] == 0:
+		var result := Run.RoundResult.DRAW
+		var result_cue := &"draw"
+		if counts[0] > 0:
+			result = Run.RoundResult.PLAYER
 			result_cue = &"lose"
-		else:
+		elif counts[1] > 0:
+			result = Run.RoundResult.BEAVER
 			result_cue = &"win"
+		run.finish_round(result)
+		_refresh_round_hud(result == Run.RoundResult.DRAW)
 		await beaver_voice.speak(result_cue)
-		_offer_next_round(counts[0], counts[1])
+		_offer_next_round(result)
 		return
 	turn = 1 - turn
+	_begin_turn()
+
+
+func _begin_turn() -> void:
 	_start_zone_turn()
 	phase = "aim"
 	if turn == 1:
 		await get_tree().create_timer(0.38).timeout
 		if phase == "aim" and turn == 1: _bot_shoot()
 
-func _offer_next_round(players: int, opponents: int) -> void:
-	if players == 0 and opponents == 0:
-		_show_run_result("Ничья", "Переиграй этот раунд.")
-		_choice_button("Переиграть раунд", "", _new_round)
-	elif players == 0 or run.wins == Run.STAGES:
-		var title := "Бобёр выиграл забег" if players == 0 else "Забег пройден"
-		_show_run_result(title, "Выиграно раундов — %d из %d." % [run.wins, Run.STAGES])
-		_choice_button("Начать новый забег", "", _start_run)
-	else:
-		phase = "reward"
-		var message := "Она войдёт в твой состав со следующего раунда."
-		if Checker.Icon.NONE not in run.roster:
-			message = "Она заменит одну из повторяющихся шашек."
-		_show_run_result("Выбери шашку", message)
-		for icon in run.offer():
-			_choice_button(Checker.ICON_NAMES[icon], Checker.ICON_DETAILS[icon], _choose_reward.bind(icon))
+
+func _offer_next_round(result: Run.RoundResult) -> void:
+	if run.match_finished():
+		_show_run_actions("")
+		_choice_button("Новый матч", "", _start_run)
+		return
+	if result != Run.RoundResult.PLAYER:
+		_new_round()
+		return
+	var rewards := run.offer()
+	if rewards.is_empty():
+		_new_round()
+		return
+	phase = "reward"
+	_show_run_actions("Выбери шашку")
+	for icon in rewards:
+		_choice_button(Checker.ICON_NAMES[icon], Checker.ICON_DETAILS[icon], _choose_reward.bind(icon))
 
 func _choose_reward(icon: Checker.Icon) -> void:
 	if phase == "reward":
@@ -1837,58 +1792,22 @@ func _choose_reward(icon: Checker.Icon) -> void:
 		_new_round()
 
 func _bot_shoot() -> void:
-	var mine: Array[Checker] = []
-	var enemies: Array[Checker] = []
-	for p in pieces:
-		if not is_instance_valid(p) or p.is_queued_for_deletion() or p.falling: continue
-		if p.side == 1: mine.append(p)
-		else: enemies.append(p)
-	if mine.is_empty() or enemies.is_empty():
-		_begin_shot_resolution()
-		return
-	var best: Checker
-	var best_setup: Beaver.ShotSetup
-	var direction := Vector3.ZERO
-	var best_score := INF
-	for piece in mine:
-		for enemy in enemies:
-			var shot := enemy.global_position - piece.global_position
-			shot.y = 0
-			var setup := beaver.shot_setup(piece.global_position, shot.normalized())
-			if setup == null: continue
-			var cost := setup.cost + shot.length() * 0.30 + rng.randf_range(0.0, 0.16)
-			if piece.hovering and not enemy.hovering:
-				cost -= 3.0
-			if cost < best_score:
-				best_score = cost
-				best_setup = setup
-				best = piece
-				direction = shot.normalized()
-	if best == null:
-		# Reposition a checker toward the center when there's no reachable shot at an opponent.
-		for piece in mine:
-			var inward := -Vector3(piece.position.x, 0.0, piece.position.z).normalized()
-			if inward.is_zero_approx(): inward = Vector3.BACK
-			var shot := global_basis * inward
-			var setup := beaver.shot_setup(piece.global_position, shot)
-			if setup != null and setup.cost < best_score:
-				best_score = setup.cost
-				best_setup = setup
-				best = piece
-				direction = shot
-	if best == null:
-		_begin_shot_resolution()
-		return
 	phase = "windup"
 	await beaver.wait_for_stance()
+	var shot := await shot_planner.choose(beaver, board_pivot, rails, zones, pieces,
+		SHOT_IMPULSE, minf(2.5 + (run.stage - 1) * 0.04, MAX_PULL_STRENGTH), run.completed_turns)
+	if shot == null:
+		_begin_shot_resolution()
+		return
+	var piece := shot.piece
 	await beaver_voice.speak(&"aim")
-	if is_instance_valid(best) and not best.is_queued_for_deletion():
-		var ready := await beaver.wind_up(best.global_position, direction, best_setup, best.size_scale)
-		if ready and is_instance_valid(best) and not best.is_queued_for_deletion():
-			var hit := await beaver.strike(best.global_position, direction, best.size_scale)
-			if hit and is_instance_valid(best) and not best.is_queued_for_deletion():
-				_shoot(best, direction, rng.randf_range(1.8, 2.5) + (run.stage - 1) * 0.04)
-				beaver.recover(direction)
+	if is_instance_valid(piece) and not piece.is_queued_for_deletion():
+		var ready := await beaver.wind_up(piece.global_position, shot.direction, shot.setup, piece.size_scale)
+		if ready and is_instance_valid(piece) and not piece.is_queued_for_deletion():
+			var hit := await beaver.strike(piece.global_position, shot.direction, piece.size_scale)
+			if hit and is_instance_valid(piece) and not piece.is_queued_for_deletion():
+				_shoot(piece, shot.direction, shot.strength)
+				beaver.recover(shot.direction)
 				return
 		if ready:
 			await beaver.recover()

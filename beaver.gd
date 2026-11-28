@@ -22,7 +22,7 @@ const NOSE_POINTS := [
 	Vector3(0.0728, 0.3105, 0.4697),
 	Vector3(0.0883, 0.3979, 0.5348),
 ]
-const NOSE_PULL_LIMIT := 0.55
+const NOSE_PULL_LIMIT := 0.83
 
 class ShotSetup:
 	var stance: Vector3
@@ -62,6 +62,10 @@ var _mouth := 0.0
 var _hand_frames: Array[Basis] = []
 var _fingertips: Array[Vector3] = []
 var _spine: int
+var _spine_rest: Transform3D
+var _shoulder_offsets: Array[Vector3] = []
+var _paw_reaches := PackedFloat32Array()
+var _arm_extension := MAX_ARM_EXTENSION
 var _head: int
 var _home: Vector3
 var _home_stance: Vector3
@@ -102,6 +106,7 @@ func _ready() -> void:
 			material_path = CHEF_BEAVER_MATERIAL
 			sole_offset = 0.174
 			position.z -= 0.14
+			_arm_extension += 0.035
 	# The shared rig has different sole heights on the three meshes.
 	_model.position.y += sole_offset
 	_rig = _model.get_node("Rig/Skeleton3D")
@@ -121,6 +126,7 @@ func _ready() -> void:
 	_home_stance = Vector3(0.0, -_home.z, 0.0)
 	_stance = _home_stance
 	_spine = _rig.find_bone("Spine")
+	_spine_rest = _rig.get_bone_global_rest(_spine)
 	_head = _rig.find_bone("Head")
 	_setup_eyes()
 	for side in ["Right", "Left"]:
@@ -141,6 +147,9 @@ func _ready() -> void:
 		var tip := _rig.get_bone_global_rest(arm[Joint.FINGERTIP]).origin
 		var frame := Basis.looking_at(hand.origin.direction_to(tip), Vector3.UP, true)
 		_arms.append(arm)
+		_shoulder_offsets.append(_spine_rest.affine_inverse() * _rig.get_bone_global_rest(arm[Joint.UPPER]).origin)
+		_paw_reaches.append(_rig.get_bone_rest(arm[Joint.LOWER]).origin.length()
+			+ _rig.get_bone_rest(arm[Joint.END]).origin.length() + _arm_extension - 0.001)
 		_shoulders.append(_rig.get_bone_parent(arm[Joint.UPPER]))
 		_hand_frames.append(frame.inverse() * hand.basis)
 		_fingertips.append(frame.inverse() * (tip - hand.origin))
@@ -254,28 +263,36 @@ func nose_transform() -> Transform3D:
 	return Transform3D(head.basis.orthonormalized(), head * NOSE_POINTS[opponent])
 
 
-func grab_nose() -> void:
+func can_grab_nose() -> bool:
+	return not _busy
+
+
+func grab_nose(offset: Vector3) -> void:
 	_nose_held = true
 	_nose_time = 0.0
-	_nose_flinch = 1.0
-	_nose_velocity += Vector3(0.0, 0.40, -0.76)
-	pull_nose(Vector3.ZERO)
+	_nose_flinch = maxf(_nose_flinch, 0.82)
+	_nose_velocity += Vector3(0.0, 0.48, 1.52)
+	pull_nose(offset)
 
 
 func pull_nose(offset: Vector3) -> void:
 	var drag := global_basis.inverse() * offset
-	_nose_target = Vector3(drag.x, drag.y * 0.82, drag.z * 0.65).limit_length(NOSE_PULL_LIMIT)
-	_nose_target.z += 0.075 + _nose_target.length() * 0.24
+	var stretch := Vector3(drag.x * 1.26, drag.y * 1.08, drag.z * 0.78)
+	# Soft resistance at full extension keeps the spring responsive to small drags.
+	_nose_target = stretch / sqrt(1.0 + stretch.length_squared() / (NOSE_PULL_LIMIT * NOSE_PULL_LIMIT))
+	_nose_target.z += 0.105 + _nose_target.length() * 0.34
 
 
 func release_nose() -> void:
 	_nose_held = false
 	_nose_target = Vector3.ZERO
+	_nose_velocity -= _nose_pull * 2.2
 
 
 func _update_nose_reaction(delta: float) -> void:
-	var tension := smoothstep(0.04, 0.50, _nose_target.length())
-	if not _nose_held and _nose_pull.length_squared() + _nose_velocity.length_squared() +			+ _nose_brace.length_squared() + _nose_tension + _nose_flinch < 0.0001:
+	var tension := smoothstep(0.10, 0.71, _nose_target.length())
+	if (not _nose_held and _nose_pull.length_squared() + _nose_velocity.length_squared()
+			+ _nose_brace.length_squared() + _nose_tension + _nose_flinch < 0.0001):
 		_nose_pull = Vector3.ZERO
 		_nose_velocity = Vector3.ZERO
 		_nose_brace = Vector3.ZERO
@@ -290,7 +307,7 @@ func _update_nose_reaction(delta: float) -> void:
 	var steps := maxi(1, ceili(time * 120.0))
 	var step := time / steps
 	for _i in steps:
-		_nose_velocity += ((goal - _nose_pull) * 174.0 - _nose_velocity * 13.5) * step
+		_nose_velocity += ((goal - _nose_pull) * 163.0 - _nose_velocity * 13.0) * step
 		_nose_pull += _nose_velocity * step
 	_nose_brace = _nose_brace.lerp(_nose_pull, 1.0 - exp(-delta * 7.4))
 	_nose_tension = lerpf(_nose_tension, maxf(tension, 0.32 if _nose_held else 0.0),
@@ -299,40 +316,82 @@ func _update_nose_reaction(delta: float) -> void:
 	_nose_flinch = maxf(strain, _nose_flinch * exp(-delta * 9.0))
 
 
-func shot_setup(checker: Vector3, direction: Vector3) -> ShotSetup:
+func shot_setup(checker: Vector3, direction: Vector3, size := 1.0) -> ShotSetup:
 	var board := get_parent_node_3d()
 	var target := board.to_local(checker)
 	var forward := (board.global_basis.inverse() * direction).normalized()
 	if forward.is_zero_approx():
 		return null
 	var right := Vector3.UP.cross(forward)
-	var radius := _home_stance.y
-	var best: ShotSetup
-	for arm in range(_arms.size()):
-		# Put the striking shoulder just outside the shot line, toward the back of the paw.
-		var lane := target - right * _side_sign(arm) * SHOULDER_OFFSET
-		lane.y = 0.0
-		var across := lane.dot(right)
-		if absf(across) >= radius:
-			continue
-		var setback := lane.dot(forward) + sqrt(radius * radius - across * across)
-		if setback < 0.74 or setback > 4.01:
-			continue
-		var base := lane - forward * setback
-		var angle := atan2(base.x, -base.z)
-		var yaw := angle_difference(-angle, atan2(forward.x, forward.z))
-		if absf(yaw) > 0.83:
-			continue
-		var travel := absf(angle_difference(_stance.x, angle)) * radius
-		var score := travel * 0.55 + absf(yaw) * 0.36 + maxf(setback - 1.5, 0.0) * 0.9
-		# Prefer the sides and the back so the beaver stays out of the player's view.
-		score += maxf(base.z - 0.4, 0.0) * 0.8
-		if best == null or score < best.cost:
-			best = ShotSetup.new()
-			best.stance = Vector3(angle, radius, yaw)
-			best.arm = arm
-			best.cost = score
-	return best
+	# Step in only when neither paw can reach from the usual walking circle.
+	for inset: float in [0.0, 0.32, 0.64, 0.96, 1.20]:
+		var radius := _home_stance.y - inset
+		var best: ShotSetup
+		for arm in _arms.size():
+			var lane := target - right * _side_sign(arm) * SHOULDER_OFFSET
+			lane.y = 0.0
+			var across := lane.dot(right)
+			if absf(across) >= radius:
+				continue
+			var setback := lane.dot(forward) + sqrt(radius * radius - across * across)
+			if setback < 0.74 or setback > 4.01:
+				continue
+			var base := lane - forward * setback
+			var angle := atan2(base.x, -base.z)
+			var yaw := angle_difference(-angle, atan2(forward.x, forward.z))
+			if absf(yaw) > 0.83:
+				continue
+			var stance := Vector3(angle, radius, yaw)
+			if not _can_reach_shot(stance, arm, target, forward, size):
+				continue
+			var travel := absf(angle_difference(_stance.x, angle)) * radius + absf(_stance.y - radius)
+			var score := travel * 0.55 + absf(yaw) * 0.36 + maxf(setback - 1.5, 0.0) * 0.9
+			# Prefer the sides and the back so the beaver stays out of the player's view.
+			score += maxf(base.z - 0.4, 0.0) * 0.8
+			if best == null or score < best.cost:
+				best = ShotSetup.new()
+				best.stance = stance
+				best.arm = arm
+				best.cost = score
+		if best != null:
+			return best
+	return null
+
+
+func _can_reach_shot(stance: Vector3, arm: int, target: Vector3, direction: Vector3, size: float) -> bool:
+	var facing := Basis(Vector3.UP, stance.x - stance.z)
+	var local_target := facing * (target - _stance_position(stance))
+	var forward := facing * direction
+	var reach := _reach_for(local_target)
+	var angles := _strike_angles(arm, reach, _look_for(local_target))
+	var hips_shift := _reach_hip_shift(arm, reach) / _model.scale.x
+	var shoulder := _spine_rest.origin + hips_shift + _lunge_for(arm, reach) \
+		+ Basis.from_euler(angles) * _spine_rest.basis * _shoulder_offsets[arm]
+	var tip := _contact_point(local_target, forward, size)
+	var paw_facing := (forward + Vector3.DOWN * 0.26).normalized()
+	var wrist := _model.transform.affine_inverse() * (tip - _finger_offset(arm, paw_facing))
+	return wrist.distance_to(shoulder) <= _paw_reaches[arm] + 0.010
+
+
+func _reach_for(local_target: Vector3) -> float:
+	return clampf((local_target.z - 1.25) / 2.4, 0.0, 1.0)
+
+
+func _look_for(local_target: Vector3) -> float:
+	return clampf(atan2(local_target.x, local_target.z), -0.56, 0.56)
+
+
+func _lunge_for(arm: int, reach: float) -> Vector3:
+	return Vector3(_side_sign(arm) * -0.09, 0.33, 0.49) * reach / _model.scale.x
+
+
+func _reach_hip_shift(arm: int, reach: float) -> Vector3:
+	return Vector3(_side_sign(arm) * 0.08, -0.035 - reach * 0.035, 0.015)
+
+
+func _strike_angles(arm: int, reach: float, yaw: float) -> Vector3:
+	var side := _side_sign(arm)
+	return Vector3(lerpf(0.20, 0.615, reach), yaw * 0.14 - side * reach * 0.22, side * 0.075)
 
 
 func wait_for_stance() -> void:
@@ -343,7 +402,7 @@ func wait_for_stance() -> void:
 func wind_up(checker: Vector3, direction: Vector3, setup: ShotSetup = null, size := 1.0) -> bool:
 	await wait_for_stance()
 	if setup == null:
-		setup = shot_setup(checker, direction)
+		setup = shot_setup(checker, direction, size)
 	if setup == null:
 		return false
 	_busy = true
@@ -352,9 +411,9 @@ func wind_up(checker: Vector3, direction: Vector3, setup: ShotSetup = null, size
 
 	var local_target := to_local(checker)
 	var forward := global_basis.inverse() * direction
-	_reach = clampf((local_target.z - 1.25) / 2.4, 0.0, 1.0)
-	_lunge = Vector3(_side_sign(_strike_arm) * -0.09, 0.33, 0.49) * _reach / _model.scale.x
-	_look_yaw = clampf(atan2(local_target.x, local_target.z), -0.56, 0.56)
+	_reach = _reach_for(local_target)
+	_lunge = _lunge_for(_strike_arm, _reach)
+	_look_yaw = _look_for(local_target)
 	var facing := _strike_facing(direction)
 	var contact := to_local(_contact_point(checker, direction, size))
 	var ready_tip := contact - forward * 0.47 + Vector3.UP * 0.31
@@ -419,7 +478,7 @@ func recover(direction := Vector3.ZERO) -> void:
 
 
 func _pose_reach(weight: float) -> void:
-	_shift_hips(Vector3(_side_sign(_strike_arm) * 0.08, -0.035 - _reach * 0.035, 0.015) * weight)
+	_shift_hips(_reach_hip_shift(_strike_arm, _reach) * weight)
 	_focus(weight)
 	for index in _legs.size():
 		_pose_foot(index, _foot_rest[index])
@@ -579,14 +638,16 @@ func _focus(weight: float) -> void:
 	var spine_offset := _rig.get_bone_global_pose(spine_parent).basis.inverse() * _lunge * weight
 	_rig.set_bone_pose_position(_spine, _rig.get_bone_rest(_spine).origin + spine_offset)
 	var reaction := 1.0 - weight if not _busy else 0.0
-	var lean := lerpf(0.035 + 0.015 * sin(_clock * 2.7), lerpf(0.20, 0.615, _reach), weight) \
-		+ _nose_brace.z * 0.23 * reaction
-	var roll := _side_sign(_strike_arm) * weight * 0.075 - _nose_brace.x * 0.14 * reaction
-	var twist := -_side_sign(_strike_arm) * _reach * weight * 0.22 + _nose_brace.x * 0.10 * reaction
-	_rotate_from_rest(_spine, Vector3(lean, _look_yaw * weight * 0.14 + twist, roll))
+	var angles := _strike_angles(_strike_arm, _reach, _look_yaw) * weight
+	angles.x += (0.035 + 0.015 * sin(_clock * 2.7)) * (1.0 - weight) + _nose_brace.z * 0.23 * reaction
+	angles.y += _nose_brace.x * 0.10 * reaction
+	angles.z -= _nose_brace.x * 0.14 * reaction
+	var lean := angles.x
+	var roll := angles.z
+	_rotate_from_rest(_spine, angles)
 	var glance := _cursor_head_turn * (1.0 - weight) * (1.0 - _nose_tension * 0.85)
 	var recoil := _nose_velocity * reaction
-	_set_head_offset(Vector3(_nose_pull.x * 0.30, _nose_pull.y * 0.40, _nose_pull.z * 0.60) * reaction)
+	_set_head_offset(Vector3(_nose_pull.x * 0.40, _nose_pull.y * 0.49, _nose_pull.z * 0.69) * reaction)
 	_rotate_from_rest(_head, Vector3(-lean * 1.35 - glance.y * 0.09,
 		_look_yaw * weight + glance.x * 0.16 + 0.027 * sin(_clock),
 		-roll + 0.018 * sin(_clock * 1.5)) + Vector3(
@@ -681,7 +742,7 @@ func _solve_limb(limb: PackedInt32Array, reach: Vector3, pole: Vector3, extensio
 	var lower_offset := _rig.get_bone_rest(end).origin
 	var length := upper_offset.length() + lower_offset.length()
 	# Let the striking paw stretch briefly for checkers farther across the board.
-	var extension := clampf(reach.length() - length + 0.001, 0.0, MAX_ARM_EXTENSION)
+	var extension := clampf(reach.length() - length + 0.001, 0.0, _arm_extension)
 	var length_scale := 1.0 + extension * extension_weight / length
 	_rig.set_bone_pose_position(lower, upper_offset * length_scale)
 	_rig.set_bone_pose_position(end, lower_offset * length_scale)

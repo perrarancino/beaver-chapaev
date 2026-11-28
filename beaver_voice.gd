@@ -298,7 +298,10 @@ const VOICES := [
 var _opponent := 0
 var _line_offsets: Dictionary[int, Dictionary] = {}
 var _reactions: Array[StringName] = []
-var _envelope := ""
+var _current_cue: StringName
+var _current_line: Array = []
+var _interrupted_intro: Array = []
+var _intro_resume_at := 0.0
 var _next_nose_line := 0
 
 
@@ -318,6 +321,7 @@ func speak(cue: StringName) -> void:
 
 
 func skip_line() -> void:
+	_interrupted_intro = []
 	if playing:
 		stop()
 		_on_finished()
@@ -333,8 +337,11 @@ func react_to_knockout(own_piece: bool) -> void:
 
 func react_to_nose_pull() -> void:
 	var now := Time.get_ticks_msec()
-	if playing or now < _next_nose_line:
+	if now < _next_nose_line or (playing and _current_cue != &"intro"):
 		return
+	if playing:
+		_interrupted_intro = _current_line
+		_intro_resume_at = get_playback_position()
 	_next_nose_line = now + 2300
 	_play_line(&"nose")
 
@@ -344,26 +351,37 @@ func _play_line(cue: StringName) -> void:
 	var offsets: Dictionary = _line_offsets.get_or_add(_opponent, {})
 	var index: int = offsets.get(cue, 0)
 	offsets[cue] = (index + 1) % variants.size()
-	var line: Array = variants[index]
+	_play_clip(cue, variants[index])
+
+
+func _play_clip(cue: StringName, line: Array, from_position := 0.0) -> void:
+	_current_cue = cue
+	_current_line = line
 	stream = line[1]
-	_envelope = line[2]
-	play()
+	play(from_position)
 	subtitle_changed.emit(line[0])
 
 
 func mouth_opening() -> float:
 	if not playing:
 		return 0.0
+	var envelope: String = _current_line[2]
 	var frame := maxf(0.0, get_playback_position() * ENVELOPE_FPS)
-	var first := mini(int(frame), _envelope.length() - 1)
-	var next := mini(first + 1, _envelope.length() - 1)
-	return lerpf(_envelope.unicode_at(first) - 48, _envelope.unicode_at(next) - 48,
+	var first := mini(int(frame), envelope.length() - 1)
+	var next := mini(first + 1, envelope.length() - 1)
+	return lerpf(envelope.unicode_at(first) - 48, envelope.unicode_at(next) - 48,
 		fposmod(frame, 1.0)) / 9.0
 
 
 func _on_finished() -> void:
+	if not _interrupted_intro.is_empty():
+		var line := _interrupted_intro
+		_interrupted_intro = []
+		_play_clip(&"intro", line, _intro_resume_at)
+		return
 	if not _reactions.is_empty():
 		_play_line(_reactions.pop_front())
 		return
+	_current_cue = &""
 	subtitle_changed.emit("")
 	idle.emit()

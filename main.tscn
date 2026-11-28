@@ -4,17 +4,18 @@
 [ext_resource type="Script" uid="uid://c1vgoyfxbt0c0" path="res://beaver.gd" id="beaver"]
 [ext_resource type="PackedScene" uid="uid://5q3aevj4vh6p" path="res://assets/beaver/beaver.glb" id="beaver_model"]
 [ext_resource type="Script" uid="uid://bwgvrarpwbtj8" path="res://beaver_voice.gd" id="beaver_voice"]
-[ext_resource type="Script" path="res://edge_rails.gd" id="rails"]
 [ext_resource type="AudioStream" uid="uid://jaw07lv70x3y" path="res://assets/FX/audio/checker_explosion.wav" id="checker_explosion_audio"]
 [ext_resource type="AudioStream" uid="uid://deh6ft48rfac8" path="res://assets/FX/audio/checker_ghost_touch.wav" id="checker_ghost_touch_audio"]
 [ext_resource type="AudioStream" uid="uid://5ydy4qo6mscs" path="res://assets/FX/audio/checker_hit.wav" id="checker_hit_audio"]
 [ext_resource type="AudioStream" uid="uid://d1butmrghr7op" path="res://assets/FX/audio/checker_lightning.wav" id="checker_lightning_audio"]
-[ext_resource type="AudioStream" path="res://assets/FX/audio/checker_strike.wav" id="checker_strike_audio"]
+[ext_resource type="AudioStream" uid="uid://dx0rje1nhhgcf" path="res://assets/FX/audio/checker_strike.wav" id="checker_strike_audio"]
 [ext_resource type="PackedScene" path="res://piece_dark.tscn" id="dark_piece"]
 [ext_resource type="Script" uid="uid://5lje83w63i6o" path="res://game.gd" id="game"]
 [ext_resource type="PackedScene" uid="uid://bvf45jm16yfmn" path="res://assets/izba/river_lodge.tscn" id="izba"]
 [ext_resource type="PackedScene" path="res://piece_light.tscn" id="light_piece"]
+[ext_resource type="Script" uid="uid://ks4trtrbmogl" path="res://edge_rails.gd" id="rails"]
 [ext_resource type="PackedScene" uid="uid://du371d8bukkmy" path="res://assets/table/round_table.fbx" id="round_table"]
+[ext_resource type="PackedScene" path="res://assets/lilith/lilith.tscn" id="lilith"]
 
 [sub_resource type="AudioStreamRandomizer" id="checker_hit_pitch"]
 random_pitch = 1.1
@@ -39,6 +40,7 @@ resource_local_to_scene = true
 render_priority = 100
 shader = ExtResource("aim_arrow")
 shader_parameter/arrow_length = 1.0
+shader_parameter/pull_amount = 0.0
 
 [sub_resource type="PlaneMesh" id="arrow_plane"]
 size = Vector2(0.36, 1)
@@ -51,7 +53,7 @@ script = ExtResource("game")
 
 [node name="CheckerSounds" type="Node" parent="." unique_id=1686456313]
 
-[node name="Strike" type="AudioStreamPlayer" parent="CheckerSounds"]
+[node name="Strike" type="AudioStreamPlayer" parent="CheckerSounds" unique_id=1999159943]
 stream = ExtResource("checker_strike_audio")
 volume_db = 4.5
 playback_type = 1
@@ -118,19 +120,23 @@ spot_angle_attenuation = 0.65
 [node name="Table" parent="BoardPivot" unique_id=1151933504 instance=ExtResource("round_table")]
 transform = Transform3D(2.992, 0, 0, 0, 3.16, 0, 0, 0, 2.992, 0, -0.21615, 0)
 
-[node name="Rails" type="Node3D" parent="BoardPivot"]
-position = Vector3(0, 0.003, 0)
+[node name="Rails" type="Node3D" parent="BoardPivot" unique_id=24028254]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.003, 0)
 script = ExtResource("rails")
 
 [node name="Izba" parent="." unique_id=1736883300 instance=ExtResource("izba")]
 transform = Transform3D(1.4, 0, 0, 0, 1, 0, 0, 0, 1.12, -0.009428501, 0.0049607754, -0.00258708)
+
+[node name="Lilith" parent="." instance=ExtResource("lilith")]
+position = Vector3(-1.79, 0.003, -1.45)
+rotation = Vector3(0, 0.24, 0)
 
 [node name="Beaver" type="Node3D" parent="." unique_id=483244909]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -4.37)
 script = ExtResource("beaver")
 
 [node name="Model" parent="Beaver" unique_id=1089378943 instance=ExtResource("beaver_model")]
-transform = Transform3D(3.3, 0, 0, 0, 3.3, 0, 0, 0, 3.3, 0, 0.99883, 0)
+transform = Transform3D(3.3, 0, 0, 0, 3.3, 0, 0, 0, 3.3, 0, 1.15483, 0)
 
 [node name="Voice" type="AudioStreamPlayer" parent="Beaver" unique_id=1789224376]
 volume_db = -4.0

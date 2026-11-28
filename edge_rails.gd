@@ -4,6 +4,7 @@ extends Node3D
 const TABLE_RADIUS := 2.872
 const INNER_RADIUS := 2.59
 const OUTER_RADIUS := 2.843
+const HEIGHT := 0.15
 const CONTACT_RADIUS := INNER_RADIUS - Checker.RADIUS
 const BOOST_MULTIPLIER := 1.25
 const SLOT_COUNT := 6
@@ -77,6 +78,20 @@ func overlaps_disc(point: Vector3, disc_radius := Checker.RADIUS) -> bool:
 		if position.distance_squared_to(nearest) < disc_radius * disc_radius:
 			return true
 	return false
+
+
+func distance_to_rail(point: Vector3) -> float:
+	var position := Vector2(point.x, point.z)
+	var radius := position.length()
+	var angle := position.angle()
+	var side := posmod(roundi(angle / SLOT_ANGLE), SLOT_COUNT)
+	if side in rail_slots and absf(angle_difference(slot_angle(side), angle)) <= ARC_HALF_ANGLE:
+		return maxf(0.0, maxf(INNER_RADIUS - radius, radius - OUTER_RADIUS))
+	var distance := INF
+	for cap in _caps:
+		var nearest := cap.radial * clampf(position.dot(cap.radial), INNER_RADIUS, OUTER_RADIUS)
+		distance = minf(distance, position.distance_to(nearest))
+	return distance
 
 
 func trace(from: Vector3, direction: Vector3, travel: float, disc_radius := Checker.RADIUS) -> Contact:

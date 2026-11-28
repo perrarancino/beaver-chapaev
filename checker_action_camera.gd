@@ -38,13 +38,21 @@ func _begin(next_mode: Mode, speed: float) -> void:
 	Engine.time_scale = original_speed * speed
 
 
-func hit(point: Vector3) -> void:
+func hit(point: Vector3, foreground := Vector3.INF) -> void:
 	if skipped or mode == Mode.FALL:
 		return
 	_begin(Mode.HIT, 0.18)
 	focus = point
 	var side := (home.origin - point).slide(Vector3.UP).normalized()
 	offset = side * 1.10 + Vector3.UP * 0.91
+	if foreground != Vector3.INF:
+		var actor := (foreground - point).slide(Vector3.UP)
+		var distance := actor.dot(side)
+		var lateral := actor.slide(side)
+		if distance > -0.10 and distance < 1.75 and lateral.length_squared() < 0.70:
+			var away := -lateral.normalized() if lateral.length_squared() > 0.001 else side.cross(Vector3.UP)
+			var angled := (side + away * 1.25).normalized()
+			offset = angled * 1.27 + Vector3.UP * 1.23
 
 
 func fall(piece: Checker, board_center: Vector3) -> void:
